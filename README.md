@@ -2,6 +2,8 @@
 
 An aria2 websocket jsonrpc in Rust.
 
+[Docs.rs](https://docs.rs/aria2_ws)
+
 [aria2 RPC docs](https://aria2.github.io/manual/en/html/aria2c.html#methods)
 
 ## Features

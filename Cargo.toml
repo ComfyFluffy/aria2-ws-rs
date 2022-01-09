@@ -2,8 +2,14 @@
 name = "aria2-ws"
 version = "0.1.0"
 edition = "2021"
-
+description = "An aria2 websocket jsonrpc API with notification support"
+readme = "README.md"
+repository = "https://github.com/WOo0W/aria2-ws-rs"
+license = "MIT"
+keywords = ["aria2", "jsonrpc"]
+categories = ["api-bindings"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 
