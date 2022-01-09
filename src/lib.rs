@@ -14,12 +14,13 @@ use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::SplitStream;
 use futures::{StreamExt, TryStreamExt};
+use response::Event;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::atomic::Ordering::SeqCst;
 use tokio::net::TcpStream;
 use tokio::select;
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Notify};
 use tokio::time::sleep;
 use tokio::{
     spawn,
@@ -29,6 +30,8 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use utils::serde_option_from_str;
+
+use crate::response::Notification;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
@@ -124,7 +127,7 @@ pub struct TaskHooks {
     // pub on_bt_complete: Option<BoxFuture<'static, ()>>,
 }
 
-type Hooks = Arc<Mutex<(HashMap<String, TaskHooks>, HashMap<String, HashSet<String>>)>>;
+type Hooks = Arc<Mutex<(HashMap<String, TaskHooks>, HashMap<String, HashSet<Event>>)>>;
 
 struct InnerClient {
     token: Option<String>,
@@ -132,10 +135,11 @@ struct InnerClient {
     id: AtomicU64,
     subscribes: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
     shutdown: Arc<Notify>,
-    // hooks and pending hooks
+    // hooks and pending events
     hooks: Hooks,
     default_timeout: Duration,
     extendet_timeout: Duration,
+    tx_not: broadcast::Sender<response::Notification>,
 }
 
 #[derive(Clone)]
@@ -218,20 +222,46 @@ async fn on_reconnect(inner_client: &Weak<InnerClient>) -> Result<(), Error> {
     Ok(())
 }
 
-fn match_hook(method: &str, hook: &mut TaskHooks) -> Option<BoxFuture<'static, ()>> {
-    match method {
+fn match_hook(event: Event, hook: &mut TaskHooks) -> Option<BoxFuture<'static, ()>> {
+    use Event::*;
+    match event {
         // "aria2.onDownloadStart" => &mut hook.on_start,
         // "aria2.onDownloadPause" => &mut hook.on_pause,
         // "aria2.onDownloadStop" => &mut hook.on_stop,
-        "aria2.onDownloadComplete" => &mut hook.on_complete,
-        "aria2.onDownloadError" => &mut hook.on_error,
-        // "aria2.onBtDownloadComplete" => &mut hook.on_bt_complete,
+        Complete => &mut hook.on_complete,
+        Error => &mut hook.on_error,
+        BtComplete => &mut hook.on_complete,
         _ => return None,
     }
     .take()
 }
 
-fn process_nofitications(req: RpcRequest, hooks: &Hooks) -> Result<(), Error> {
+fn process_nofitications(notification: &Notification, hooks: &Hooks) -> Result<(), Error> {
+    use Event::*;
+    if !matches!(notification.event, Complete | Error | BtComplete) {
+        return Ok(());
+    }
+    let mut lock = hooks.lock().unwrap();
+    if let Some(hook) = lock.0.get_mut(&notification.gid) {
+        if let Some(hook) = match_hook(notification.event, hook) {
+            spawn(hook);
+        }
+    } else {
+        match lock.1.entry(notification.gid.clone()) {
+            Entry::Occupied(mut e) => {
+                e.get_mut().insert(notification.event);
+            }
+            Entry::Vacant(e) => {
+                let mut set = HashSet::with_capacity(1);
+                set.insert(notification.event);
+                e.insert(set);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn get_gid_from_notifictaion(req: &RpcRequest) -> Result<&str, Error> {
     let err = "aria2: unexpected notification";
     let gid = req
         .params
@@ -241,31 +271,14 @@ fn process_nofitications(req: RpcRequest, hooks: &Hooks) -> Result<(), Error> {
         .ok_or(err)?
         .as_str()
         .ok_or(err)?;
-    let mut lock = hooks.lock().unwrap();
-    if let Some(hook) = lock.0.get_mut(gid) {
-        if let Some(hook) = match_hook(req.method.as_str(), hook) {
-            drop(lock);
-            spawn(hook);
-        }
-    } else {
-        match lock.1.entry(gid.to_owned()) {
-            Entry::Occupied(mut e) => {
-                e.get_mut().insert(req.method);
-            }
-            Entry::Vacant(e) => {
-                let mut set = HashSet::with_capacity(1);
-                set.insert(req.method);
-                e.insert(set);
-            }
-        }
-    }
-    Ok(())
+    Ok(gid)
 }
 
 async fn read_worker(
     mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     subscribes: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
     hooks: Hooks,
+    tx_not: broadcast::Sender<Notification>,
 ) {
     while let Ok(Some(msg)) = read.try_next().await {
         let s = try_continue!(msg.to_text());
@@ -275,7 +288,16 @@ async fn read_worker(
                 // The message is a notification.
                 // https://aria2.github.io/manual/en/html/aria2c.html#notifications
                 let req: RpcRequest = try_continue!(serde_json::from_value(v), s);
-                try_continue!(process_nofitications(req, &hooks), s);
+                let gid = try_continue!(get_gid_from_notifictaion(&req), s);
+                let not = try_continue!(
+                    Notification::new(gid.to_string(), &req.method)
+                        .ok_or("unexpected notificaiton"),
+                    s
+                );
+
+                try_continue!(process_nofitications(&not, &hooks), s);
+
+                let _ = tx_not.send(not);
                 continue;
             }
         }
@@ -364,6 +386,7 @@ impl Client {
         let hooks: Hooks = Arc::new(Mutex::new((HashMap::new(), HashMap::new())));
         let shutdown = Arc::new(Notify::new());
         let url = url.to_string();
+        let (tx_not, _) = broadcast::channel(16);
 
         let inner = Arc::new(InnerClient {
             tx_write,
@@ -374,10 +397,11 @@ impl Client {
             hooks: hooks.clone(),
             default_timeout: Duration::from_secs(10),
             extendet_timeout: Duration::from_secs(120),
+            tx_not: tx_not.clone(),
         });
 
         {
-            let inner_downgraded = Arc::downgrade(&inner);
+            let inner_weak = Arc::downgrade(&inner);
             spawn(async move {
                 let mut reconnect = false;
                 loop {
@@ -385,12 +409,16 @@ impl Client {
                         Ok((ws, _)) => {
                             let (mut write, read) = ws.split();
                             if reconnect {
-                                let _ = on_reconnect(&inner_downgraded).await;
+                                let _ = on_reconnect(&inner_weak).await;
                             }
                             reconnect = true;
 
-                            let read_fut =
-                                spawn(read_worker(read, subscribes.clone(), hooks.clone()));
+                            let read_fut = spawn(read_worker(
+                                read,
+                                subscribes.clone(),
+                                hooks.clone(),
+                                tx_not.clone(),
+                            ));
                             let write_fut = async move {
                                 while let Some(msg) = rx_write.recv().await {
                                     try_continue!(write.send(msg).await);
@@ -437,12 +465,12 @@ impl Client {
 
     async fn set_hooks(&self, gid: &str, hooks: Option<TaskHooks>) {
         if let Some(mut hook) = hooks {
-            let gid = gid.to_owned();
+            let gid = gid.to_string();
             let mut lock = self.0.hooks.lock().unwrap();
             if let Some(set) = lock.1.get_mut(&gid) {
                 let set = std::mem::take(set);
-                for method in set {
-                    if let Some(h) = match_hook(&method, &mut hook) {
+                for event in set {
+                    if let Some(h) = match_hook(event, &mut hook) {
                         spawn(h);
                     }
                 }
@@ -450,18 +478,8 @@ impl Client {
             lock.0.insert(gid, hook);
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use crate::Client;
-
-    use super::Error;
-    #[tokio::test]
-    async fn it_works() -> Result<(), Error> {
-        let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None).await?;
-        let r = client.get_version().await?;
-        println!("{:?}", r);
-        Ok(())
+    pub fn subscribe_notifications(&self) -> broadcast::Receiver<Notification> {
+        self.0.tx_not.subscribe()
     }
 }

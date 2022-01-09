@@ -217,3 +217,52 @@ pub struct Server {
     #[serde(with = "serde_from_str")]
     download_speed: u64,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
+pub enum Event {
+    Start,
+    Pause,
+    Stop,
+    Complete,
+    Error,
+    /// This notification will be sent when a torrent download is complete but seeding is still going on.
+    BtComplete,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Notification {
+    pub gid: String,
+    pub event: Event,
+}
+
+impl Notification {
+    pub fn new(gid: String, method: &str) -> Option<Self> {
+        use Event::*;
+        let event = match method {
+            "aria2.onDownloadStart" => Start,
+            "aria2.onDownloadPause" => Pause,
+            "aria2.onDownloadStop" => Stop,
+            "aria2.onDownloadComplete" => Complete,
+            "aria2.onDownloadError" => Error,
+            "aria2.onBtDownloadComplete" => BtComplete,
+            _ => return None,
+        };
+        Some(Self { gid, event })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::response::{Event, Notification};
+
+    #[test]
+    fn event() {
+        let not = Notification::new("a".to_string(), "aria2.onBtDownloadComplete").unwrap();
+        let x = &not;
+        let y = x.event;
+        assert!(matches!(
+            y,
+            Event::BtComplete | Event::Complete | Event::Error
+        ));
+    }
+}
