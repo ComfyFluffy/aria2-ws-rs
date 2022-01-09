@@ -1,19 +1,12 @@
-# aria2-ws
+use std::sync::Arc;
 
-An aria2 websocket jsonrpc in Rust.
+use aria2_ws::{Client, TaskHooks, TaskOptions};
+use futures::FutureExt;
+use serde_json::json;
+use tokio::{spawn, sync::Semaphore};
 
-[aria2 RPC docs](https://aria2.github.io/manual/en/html/aria2c.html#methods)
-
-## Features
-
-- Almost all methods and structed responses
-- Auto reconnect
-- Ensures `on_complete` and `on_error` hook to be executed even after reconnected.
-- Supports notifications
-
-## Example
-
-```rust
+#[tokio::test]
+#[ignore]
 async fn example() {
     let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
         .await
@@ -23,7 +16,7 @@ async fn example() {
         header: Some(vec!["Referer: https://www.pixiv.net/".to_string()]),
         all_proxy: Some("http://127.0.0.1:10809".to_string()),
         // Add extra options which are not included in TaskOptions.
-        extra_options: json!({"max-download-limit": "100K"})
+        extra_options: json!({"max-download-limit": "200K"})
             .as_object()
             .unwrap()
             .clone(),
@@ -109,5 +102,3 @@ async fn example() {
 
     client.shutdown().await.unwrap();
 }
-
-```

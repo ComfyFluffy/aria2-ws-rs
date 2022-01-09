@@ -269,16 +269,17 @@ impl Client {
     }
 
     /// Call `aria2.shutdown` and drop the client.
-    ///
-    /// The function will return once the call success,
-    /// while the aria2 server may not shutdown immediately.
     pub async fn shutdown(self) -> Result<()> {
-        self.call(self.0.id(), "shutdown", vec![]).await
+        self.call_and_subscribe::<String>("shutdown", vec![], None)
+            .await?;
+        Ok(())
     }
 
     /// Call `aria2.forceShutdown` and drop the client.
     pub async fn force_shutdown(self) -> Result<()> {
-        self.call(self.0.id(), "forceShutdown", vec![]).await
+        self.call_and_subscribe::<String>("forceShutdown", vec![], None)
+            .await?;
+        Ok(())
     }
 
     pub async fn save_session(&self) -> Result<()> {

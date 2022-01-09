@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use futures::future::BoxFuture;
 use futures::prelude::*;
-use futures::stream::SplitStream;
+use futures::stream::{SplitSink, SplitStream};
 use futures::{StreamExt, TryStreamExt};
 use response::Event;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -274,44 +274,6 @@ fn get_gid_from_notifictaion(req: &RpcRequest) -> Result<&str, Error> {
     Ok(gid)
 }
 
-async fn read_worker(
-    mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    subscribes: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
-    hooks: Hooks,
-    tx_not: broadcast::Sender<Notification>,
-) {
-    while let Ok(Some(msg)) = read.try_next().await {
-        let s = try_continue!(msg.to_text());
-        let v = try_continue!(serde_json::from_str::<Value>(s), s);
-        if let Value::Object(obj) = &v {
-            if obj.contains_key("method") {
-                // The message is a notification.
-                // https://aria2.github.io/manual/en/html/aria2c.html#notifications
-                let req: RpcRequest = try_continue!(serde_json::from_value(v), s);
-                let gid = try_continue!(get_gid_from_notifictaion(&req), s);
-                let not = try_continue!(
-                    Notification::new(gid.to_string(), &req.method)
-                        .ok_or("unexpected notificaiton"),
-                    s
-                );
-
-                try_continue!(process_nofitications(&not, &hooks), s);
-
-                let _ = tx_not.send(not);
-                continue;
-            }
-        }
-
-        let res: RpcResponse = try_continue!(serde_json::from_value(v), s);
-        if let Some(ref id) = res.id {
-            let tx = subscribes.lock().unwrap().remove(id);
-            if let Some(tx) = tx {
-                let _ = tx.send(res);
-            }
-        }
-    }
-}
-
 impl InnerClient {
     fn id(&self) -> u64 {
         self.id.fetch_add(1, SeqCst)
@@ -378,6 +340,69 @@ impl InnerClient {
     }
 }
 
+async fn read_worker(
+    mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    subscribes: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
+    hooks: Hooks,
+    tx_not: broadcast::Sender<Notification>,
+) -> Result<(), Error> {
+    while let Some(msg) = read.try_next().await? {
+        let s = try_continue!(msg.to_text());
+        println!("{}", s);
+        let v = try_continue!(serde_json::from_str::<Value>(s), s);
+        if let Value::Object(obj) = &v {
+            if obj.contains_key("method") {
+                // The message is a notification.
+                // https://aria2.github.io/manual/en/html/aria2c.html#notifications
+                let req: RpcRequest = try_continue!(serde_json::from_value(v), s);
+                let gid = try_continue!(get_gid_from_notifictaion(&req), s);
+                let not = try_continue!(
+                    Notification::new(gid.to_string(), &req.method)
+                        .ok_or("unexpected notificaiton"),
+                    s
+                );
+
+                try_continue!(process_nofitications(&not, &hooks), s);
+
+                let _ = tx_not.send(not);
+                continue;
+            }
+        }
+
+        let res: RpcResponse = try_continue!(serde_json::from_value(v), s);
+        if let Some(ref id) = res.id {
+            let tx = subscribes.lock().unwrap().remove(id);
+            if let Some(tx) = tx {
+                let _ = tx.send(res);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn write_worker(
+    mut write: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    mut rx_write: mpsc::Receiver<Message>,
+    exit: Arc<Notify>,
+) -> mpsc::Receiver<Message> {
+    loop {
+        select! {
+            msg = rx_write.recv() => {
+                if let Some(msg) = msg {
+                    println!("{:?}", msg);
+                    try_continue!(write.send(msg).await);
+                    try_continue!(write.flush().await);
+                } else {
+                    return rx_write;
+                }
+            },
+            _ = exit.notified() => {
+                return rx_write;
+            }
+        }
+    }
+}
+
 impl Client {
     pub async fn connect(url: &str, token: Option<&str>) -> Result<Self, Error> {
         let (tx_write, mut rx_write) = mpsc::channel::<Message>(4);
@@ -407,31 +432,27 @@ impl Client {
                 loop {
                     match tokio_tungstenite::connect_async(&url).await {
                         Ok((ws, _)) => {
-                            let (mut write, read) = ws.split();
+                            let (write, read) = ws.split();
                             if reconnect {
                                 let _ = on_reconnect(&inner_weak).await;
+                            } else {
+                                reconnect = true;
                             }
-                            reconnect = true;
-
-                            let read_fut = spawn(read_worker(
+                            let read_fut = read_worker(
                                 read,
                                 subscribes.clone(),
                                 hooks.clone(),
                                 tx_not.clone(),
-                            ));
-                            let write_fut = async move {
-                                while let Some(msg) = rx_write.recv().await {
-                                    try_continue!(write.send(msg).await);
-                                    try_continue!(write.flush().await);
-                                }
-                                rx_write
-                            };
+                            );
+
+                            let exit = Arc::new(Notify::new());
+                            let write_fut = spawn(write_worker(write, rx_write, exit.clone()));
 
                             select! {
-                                rx = write_fut => {
-                                    rx_write = rx;
-                                    read_fut.abort();
-                                    subscribes.lock().unwrap().clear();
+                                result = read_fut => {
+                                    println!("aria2 disconnected: {:?}", result);
+                                    exit.notify_waiters();
+                                    rx_write = write_fut.await.unwrap();
                                 },
                                 _ = shutdown.notified() => {
                                     return;
