@@ -76,6 +76,16 @@ pub struct Status {
     pub dir: String,
     pub files: Vec<File>,
     pub bittorrent: Option<BittorrentStatus>,
+    /// The number of verified number of bytes while the files are being hash checked.
+    ///
+    /// This key exists only when this download is being hash checked.
+    #[serde(with = "serde_option_from_str", default)]
+    pub verified_length: Option<u64>,
+    /// `true` if this download is waiting for the hash check in a queue.
+    ///
+    /// This key exists only when this download is in the queue.
+    #[serde(with = "serde_option_from_str", default)]
+    pub verify_integrity_pending: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -83,6 +93,7 @@ pub struct Status {
 pub struct BittorrentStatus {
     pub announce_list: Vec<String>,
     pub comment: Option<String>,
+    #[serde(with = "serde_from_str")]
     pub creation_date: u64,
     pub mode: BitTorrentFileMode,
 }
@@ -97,17 +108,21 @@ pub enum BitTorrentFileMode {
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
-    index: String,
-    length: String,
-    completed_length: String,
+    #[serde(with = "serde_from_str")]
+    index: u64,
     path: String,
-    selected: String,
-    uris: Vec<Uris>,
+    #[serde(with = "serde_from_str")]
+    length: u64,
+    #[serde(with = "serde_from_str")]
+    completed_length: u64,
+    #[serde(with = "serde_from_str")]
+    selected: bool,
+    uris: Vec<Uri>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct Uris {
+pub struct Uri {
     status: UriStatus,
     uri: String,
 }
@@ -141,4 +156,64 @@ pub enum TaskStatus {
     Error,
     Complete,
     Removed,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Peer {
+    #[serde(with = "serde_from_str")]
+    pub am_choking: bool,
+    pub bitfield: String,
+    #[serde(with = "serde_from_str")]
+    pub download_speed: u64,
+    pub ip: String,
+    #[serde(with = "serde_from_str")]
+    pub peer_choking: bool,
+    pub peer_id: String,
+    #[serde(with = "serde_from_str")]
+    pub port: u16,
+    #[serde(with = "serde_from_str")]
+    pub seeder: bool,
+    #[serde(with = "serde_from_str")]
+    pub upload_speed: u64,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalStat {
+    #[serde(with = "serde_from_str")]
+    download_speed: u64,
+    #[serde(with = "serde_from_str")]
+    upload_speed: u64,
+    #[serde(with = "serde_from_str")]
+    num_active: i32,
+    #[serde(with = "serde_from_str")]
+    num_waiting: i32,
+    #[serde(with = "serde_from_str")]
+    num_stopped: i32,
+    #[serde(with = "serde_from_str")]
+    num_stopped_total: i32,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInfo {
+    session_id: String,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GetServersResult {
+    #[serde(with = "serde_from_str")]
+    index: i32,
+    servers: Vec<Server>,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Server {
+    uri: String,
+    current_uri: String,
+    #[serde(with = "serde_from_str")]
+    download_speed: u64,
 }

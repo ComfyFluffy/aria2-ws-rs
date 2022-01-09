@@ -4,8 +4,9 @@ mod utils;
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use std::time::Duration;
 
@@ -120,12 +121,12 @@ pub struct TaskHooks {
     // pub on_stop: Option<BoxFuture<'static, ()>>,
     pub on_complete: Option<BoxFuture<'static, ()>>,
     pub on_error: Option<BoxFuture<'static, ()>>,
-    pub on_bt_complete: Option<BoxFuture<'static, ()>>,
+    // pub on_bt_complete: Option<BoxFuture<'static, ()>>,
 }
 
 type Hooks = Arc<Mutex<(HashMap<String, TaskHooks>, HashMap<String, HashSet<String>>)>>;
 
-pub struct Client {
+struct InnerClient {
     token: Option<String>,
     tx_write: mpsc::Sender<Message>,
     id: AtomicU64,
@@ -137,7 +138,10 @@ pub struct Client {
     extendet_timeout: Duration,
 }
 
-impl Drop for Client {
+#[derive(Clone)]
+pub struct Client(Arc<InnerClient>);
+
+impl Drop for InnerClient {
     fn drop(&mut self) {
         self.shutdown.notify_waiters();
     }
@@ -167,7 +171,52 @@ macro_rules! try_continue {
     };
 }
 
-fn on_reconnect(hooks: Hooks) {}
+async fn on_reconnect(inner_client: &Weak<InnerClient>) -> Result<(), Error> {
+    if let Some(client) = inner_client.upgrade() {
+        let err = "aria2: unexpected response";
+        let mut res: HashMap<String, Map<String, Value>> = HashMap::new();
+        for mut map in client
+            .custom_tell_stopped(
+                0,
+                1000,
+                Some(
+                    ["status", "totalLength", "completedLength", "gid"]
+                        .into_iter()
+                        .map(|x| x.to_string())
+                        .collect(),
+                ),
+            )
+            .await?
+        {
+            let gid = if let Some(Value::String(s)) = map.remove("gid") {
+                s
+            } else {
+                Err(err)?
+            };
+            res.insert(gid, map);
+        }
+
+        let mut lock = client.hooks.lock().unwrap();
+        for (gid, hooks) in &mut lock.0 {
+            if let Some(status) = res.get(gid) {
+                let total = status.get("totalLength");
+                if total.is_some() && total == status.get("completedLength") {
+                    if let Some(h) = hooks.on_complete.take() {
+                        spawn(h);
+                    }
+                }
+                if let Some(Value::String(s)) = status.get("status") {
+                    if s == "error" {
+                        if let Some(h) = hooks.on_error.take() {
+                            spawn(h);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 fn match_hook(method: &str, hook: &mut TaskHooks) -> Option<BoxFuture<'static, ()>> {
     match method {
@@ -176,14 +225,14 @@ fn match_hook(method: &str, hook: &mut TaskHooks) -> Option<BoxFuture<'static, (
         // "aria2.onDownloadStop" => &mut hook.on_stop,
         "aria2.onDownloadComplete" => &mut hook.on_complete,
         "aria2.onDownloadError" => &mut hook.on_error,
-        "aria2.onBtDownloadComplete" => &mut hook.on_bt_complete,
+        // "aria2.onBtDownloadComplete" => &mut hook.on_bt_complete,
         _ => return None,
     }
     .take()
 }
 
 fn process_nofitications(req: RpcRequest, hooks: &Hooks) -> Result<(), Error> {
-    let err = "unexpected notification";
+    let err = "aria2: unexpected notification";
     let gid = req
         .params
         .get(0)
@@ -241,6 +290,72 @@ async fn read_worker(
     }
 }
 
+impl InnerClient {
+    fn id(&self) -> u64 {
+        self.id.fetch_add(1, SeqCst)
+    }
+
+    fn subscribe_id<T>(
+        &self,
+        id: u64,
+        timeout: Option<Duration>,
+    ) -> BoxFuture<'static, Result<T, Error>>
+    where
+        T: DeserializeOwned + Send,
+    {
+        let (tx, rx) = oneshot::channel();
+        self.subscribes.lock().unwrap().insert(id, tx);
+        let timeout = timeout.unwrap_or(self.default_timeout);
+
+        async move {
+            let res = if timeout.is_zero() {
+                rx.await?
+            } else {
+                tokio::time::timeout(timeout, rx).await??
+            };
+
+            if let Some(err) = res.error {
+                Err(err)?;
+            }
+
+            let v = res.result.ok_or("aria2: result not found")?;
+            Ok(serde_json::from_value::<T>(v)?)
+        }
+        .boxed()
+    }
+
+    async fn call(&self, id: u64, method: &str, mut params: Vec<Value>) -> Result<(), Error> {
+        if let Some(ref token) = self.token {
+            params.insert(0, Value::String(token.clone()))
+        }
+        let req = RpcRequest {
+            id: Some(id),
+            jsonrpc: "2.0".to_string(),
+            method: "aria2.".to_string() + method,
+            params,
+        };
+        self.tx_write
+            .send(Message::Text(serde_json::to_string(&req)?))
+            .await?;
+        Ok(())
+    }
+
+    async fn call_and_subscribe<T>(
+        &self,
+        method: &str,
+        params: Vec<Value>,
+        timeout: Option<Duration>,
+    ) -> Result<T, Error>
+    where
+        T: DeserializeOwned + Send,
+    {
+        let id = self.id();
+        let fut = self.subscribe_id::<T>(id, timeout);
+        self.call(id, method, params).await?;
+        fut.await
+    }
+}
+
 impl Client {
     pub async fn connect(url: &str, token: Option<&str>) -> Result<Self, Error> {
         let (tx_write, mut rx_write) = mpsc::channel::<Message>(4);
@@ -250,15 +365,29 @@ impl Client {
         let shutdown = Arc::new(Notify::new());
         let url = url.to_string();
 
+        let inner = Arc::new(InnerClient {
+            tx_write,
+            id: AtomicU64::new(0),
+            token: token.map(|t| "token:".to_string() + t),
+            subscribes: subscribes.clone(),
+            shutdown: shutdown.clone(),
+            hooks: hooks.clone(),
+            default_timeout: Duration::from_secs(10),
+            extendet_timeout: Duration::from_secs(120),
+        });
+
         {
-            let subscribes = subscribes.clone();
-            let hooks = hooks.clone();
-            let shutdown = shutdown.clone();
+            let inner_downgraded = Arc::downgrade(&inner);
             spawn(async move {
+                let mut reconnect = false;
                 loop {
                     match tokio_tungstenite::connect_async(&url).await {
                         Ok((ws, _)) => {
                             let (mut write, read) = ws.split();
+                            if reconnect {
+                                let _ = on_reconnect(&inner_downgraded).await;
+                            }
+                            reconnect = true;
 
                             let read_fut =
                                 spawn(read_worker(read, subscribes.clone(), hooks.clone()));
@@ -290,87 +419,26 @@ impl Client {
             });
         }
 
-        // TODO: Auto reconnect, can be shut down
-        Ok(Self {
-            tx_write,
-            id: AtomicU64::new(0),
-            token: token.map(|t| "token:".to_string() + t),
-            subscribes,
-            shutdown,
-            hooks,
-            default_timeout: Duration::from_secs(15),
-            extendet_timeout: Duration::from_secs(120),
-        })
+        Ok(Self(inner))
     }
 
-    pub fn set_token(&mut self, token: Option<&str>) {
-        self.token = token.map(|t| "token:".to_string() + t);
+    pub async fn call(&self, id: u64, method: &str, params: Vec<Value>) -> Result<(), Error> {
+        self.0.call(id, method, params).await
     }
 
-    fn id(&self) -> u64 {
-        self.id.fetch_add(1, SeqCst)
-    }
-
-    pub async fn call(&self, id: u64, method: &str, mut params: Vec<Value>) -> Result<(), Error> {
-        if let Some(ref token) = self.token {
-            params.insert(0, Value::String(token.clone()))
-        }
-        let req = RpcRequest {
-            id: Some(id),
-            jsonrpc: "2.0".to_string(),
-            method: "aria2.".to_string() + method,
-            params,
-        };
-        self.tx_write
-            .send(Message::Text(serde_json::to_string(&req)?))
-            .await?;
-        Ok(())
-    }
-
-    fn subscribe_id<T>(&self, id: u64, timeout: Option<Duration>) -> BoxFuture<Result<T, Error>>
-    where
-        T: DeserializeOwned + Send,
-    {
-        let (tx, rx) = oneshot::channel();
-        self.subscribes.lock().unwrap().insert(id, tx);
-        let timeout = timeout.unwrap_or(self.default_timeout);
-
-        async move {
-            let res = if timeout.is_zero() {
-                rx.await?
-            } else {
-                tokio::time::timeout(timeout, rx).await??
-            };
-
-            if let Some(err) = res.error {
-                Err(err)?;
-            }
-
-            let v = res.result.ok_or("aria2: result not found")?;
-            Ok(serde_json::from_value::<T>(v)?)
-        }
-        .boxed()
-    }
-
-    pub async fn call_and_subscribe<T>(
+    pub async fn call_and_subscribe<T: DeserializeOwned + Send>(
         &self,
         method: &str,
         params: Vec<Value>,
         timeout: Option<Duration>,
-    ) -> Result<T, Error>
-    where
-        T: DeserializeOwned + Send,
-    {
-        let id = self.id();
-        let fut = self.subscribe_id::<T>(id, timeout);
-        self.call(id, method, params).await?;
-        fut.await
+    ) -> Result<T, Error> {
+        self.0.call_and_subscribe(method, params, timeout).await
     }
 
-    fn set_hooks(&self, gid: &str, hooks: Option<TaskHooks>) {
+    async fn set_hooks(&self, gid: &str, hooks: Option<TaskHooks>) {
         if let Some(mut hook) = hooks {
             let gid = gid.to_owned();
-            let mut lock = self.hooks.lock().unwrap();
+            let mut lock = self.0.hooks.lock().unwrap();
             if let Some(set) = lock.1.get_mut(&gid) {
                 let set = std::mem::take(set);
                 for method in set {
@@ -386,7 +454,9 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use super::{Client, Error};
+    use crate::Client;
+
+    use super::Error;
     #[tokio::test]
     async fn it_works() -> Result<(), Error> {
         let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None).await?;

@@ -1,10 +1,50 @@
 use std::time::Duration;
 
+use serde::Serialize;
 use serde_json::{json, to_value, Map, Value};
 
-use crate::{response, utils::PushExt, Client, Error, TaskHooks, TaskOptions};
+use crate::{
+    response,
+    utils::{value_into_vec, PushExt},
+    Client, Error, InnerClient, TaskHooks, TaskOptions,
+};
 
 type Result<T> = std::result::Result<T, Error>;
+
+impl InnerClient {
+    async fn custom_tell_multi(
+        &self,
+        method: &str,
+        offset: i32,
+        num: i32,
+        keys: Option<Vec<String>>,
+    ) -> Result<Vec<Map<String, Value>>> {
+        let mut params = value_into_vec(json!([offset, num]));
+        params.push_some(keys)?;
+        self.call_and_subscribe(method, params, None).await
+    }
+
+    pub async fn custom_tell_stopped(
+        &self,
+        offset: i32,
+        num: i32,
+        keys: Option<Vec<String>>,
+    ) -> Result<Vec<Map<String, Value>>> {
+        self.custom_tell_multi("tellStopped", offset, num, keys)
+            .await
+    }
+}
+
+/// The parameter `how` in `changePosition`.
+///
+/// https://aria2.github.io/manual/en/html/aria2c.html#aria2.changePosition
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PositionHow {
+    PosSet,
+    PosCur,
+    PosEnd,
+}
 
 impl Client {
     pub async fn get_version(&self) -> Result<response::Version> {
@@ -23,7 +63,7 @@ impl Client {
         params.push_some(position)?;
 
         let gid: String = self.call_and_subscribe("addUri", params, None).await?;
-        self.set_hooks(&gid, hooks);
+        self.set_hooks(&gid, hooks).await;
         Ok(gid)
     }
 
@@ -41,7 +81,7 @@ impl Client {
         params.push_some(position)?;
 
         let gid: String = self.call_and_subscribe("addTorrent", params, None).await?;
-        self.set_hooks(&gid, hooks);
+        self.set_hooks(&gid, hooks).await;
         Ok(gid)
     }
 
@@ -57,7 +97,7 @@ impl Client {
         params.push_some(position)?;
 
         let gid: String = self.call_and_subscribe("addMetalink", params, None).await?;
-        self.set_hooks(&gid, hooks);
+        self.set_hooks(&gid, hooks).await;
         Ok(gid)
     }
 
@@ -68,7 +108,7 @@ impl Client {
     }
 
     pub async fn remove(&self, gid: String) -> Result<()> {
-        self.do_gid("remove", gid, Some(self.extendet_timeout))
+        self.do_gid("remove", gid, Some(self.0.extendet_timeout))
             .await
     }
 
@@ -77,11 +117,12 @@ impl Client {
     }
 
     pub async fn pause(&self, gid: String) -> Result<()> {
-        self.do_gid("pause", gid, Some(self.extendet_timeout)).await
+        self.do_gid("pause", gid, Some(self.0.extendet_timeout))
+            .await
     }
 
     pub async fn pause_all(&self) -> Result<()> {
-        self.call_and_subscribe::<String>("pauseAll", vec![], Some(self.extendet_timeout))
+        self.call_and_subscribe::<String>("pauseAll", vec![], Some(self.0.extendet_timeout))
             .await?;
         Ok(())
     }
@@ -115,6 +156,135 @@ impl Client {
     pub async fn tell_status(&self, gid: String) -> Result<response::Status> {
         self.call_and_subscribe("tellStatus", vec![Value::String(gid)], None)
             .await
+    }
+
+    pub async fn get_uris(&self, gid: String) -> Result<Vec<response::Uri>> {
+        self.call_and_subscribe("getUris", vec![Value::String(gid)], None)
+            .await
+    }
+
+    pub async fn get_files(&self, gid: String) -> Result<Vec<response::File>> {
+        self.call_and_subscribe("getFiles", vec![Value::String(gid)], None)
+            .await
+    }
+
+    pub async fn get_peers(&self, gid: String) -> Result<Vec<response::Peer>> {
+        self.call_and_subscribe("getPeers", vec![Value::String(gid)], None)
+            .await
+    }
+
+    pub async fn get_servers(&self, gid: String) -> Result<Vec<response::GetServersResult>> {
+        self.call_and_subscribe("getServers", vec![Value::String(gid)], None)
+            .await
+    }
+
+    pub async fn tell_active(&self) -> Result<Vec<response::Status>> {
+        self.call_and_subscribe("tellActive", vec![], None).await
+    }
+
+    pub async fn tell_waiting(&self, offset: i32, num: i32) -> Result<Vec<response::Status>> {
+        self.call_and_subscribe("tellWaiting", value_into_vec(json!([offset, num])), None)
+            .await
+    }
+
+    pub async fn tell_stopped(&self, offset: i32, num: i32) -> Result<Vec<response::Status>> {
+        self.call_and_subscribe("tellStopped", value_into_vec(json!([offset, num])), None)
+            .await
+    }
+
+    pub async fn custom_tell_active(
+        &self,
+        keys: Option<Vec<String>>,
+    ) -> Result<Vec<Map<String, Value>>> {
+        let mut params = Vec::new();
+        params.push_some(keys)?;
+        self.call_and_subscribe("tellActive", params, None).await
+    }
+
+    pub async fn custom_tell_waiting(
+        &self,
+        offset: i32,
+        num: i32,
+        keys: Option<Vec<String>>,
+    ) -> Result<Vec<Map<String, Value>>> {
+        self.0
+            .custom_tell_multi("tellWaiting", offset, num, keys)
+            .await
+    }
+
+    pub async fn custom_tell_stopped(
+        &self,
+        offset: i32,
+        num: i32,
+        keys: Option<Vec<String>>,
+    ) -> Result<Vec<Map<String, Value>>> {
+        self.0.custom_tell_stopped(offset, num, keys).await
+    }
+
+    pub async fn change_position(&self, gid: String, pos: i32, how: PositionHow) -> Result<i32> {
+        let params = value_into_vec(json!([gid, pos, how]));
+        self.call_and_subscribe("changePosition", params, None)
+            .await
+    }
+
+    /// # Returns
+    /// This method returns a list which contains two integers.
+    ///
+    /// The first integer is the number of URIs deleted.
+    /// The second integer is the number of URIs added.
+    pub async fn change_uri(
+        &self,
+        gid: String,
+        file_index: i32,
+        del_uris: Vec<String>,
+        add_uris: Vec<String>,
+        position: Option<i32>,
+    ) -> Result<[i32; 2]> {
+        let mut params = value_into_vec(json!([gid, file_index, del_uris, add_uris]));
+        params.push_some(position)?;
+        self.call_and_subscribe("changeUri", params, None).await
+    }
+
+    // TODO: getOption changeOption getGlobalOption changeGlobalOption
+
+    pub async fn get_global_stat(&self) -> Result<response::GlobalStat> {
+        self.call_and_subscribe("getGlobalStat", vec![], None).await
+    }
+
+    pub async fn purge_download_result(&self) -> Result<()> {
+        self.call_and_subscribe::<String>("purgeDownloadResult", vec![], None)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_download_result(&self, gid: String) -> Result<()> {
+        self.call_and_subscribe::<String>("removeDownloadResult", vec![Value::String(gid)], None)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_session_info(&self) -> Result<response::SessionInfo> {
+        self.call_and_subscribe("getSessionInfo", vec![], None)
+            .await
+    }
+
+    /// Call `aria2.shutdown` and drop the client.
+    ///
+    /// The function will return once the call success,
+    /// while the aria2 server may not shutdown immediately.
+    pub async fn shutdown(self) -> Result<()> {
+        self.call(self.0.id(), "shutdown", vec![]).await
+    }
+
+    /// Call `aria2.forceShutdown` and drop the client.
+    pub async fn force_shutdown(self) -> Result<()> {
+        self.call(self.0.id(), "forceShutdown", vec![]).await
+    }
+
+    pub async fn save_session(&self) -> Result<()> {
+        self.call_and_subscribe::<String>("saveSession", vec![], None)
+            .await?;
+        Ok(())
     }
 }
 

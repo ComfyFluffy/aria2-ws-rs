@@ -112,6 +112,8 @@ pub trait PushExt {
     fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<(), serde_json::Error>;
 
     fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<(), serde_json::Error>;
+
+    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), serde_json::Error>;
 }
 
 impl PushExt for Vec<Value> {
@@ -130,4 +132,21 @@ impl PushExt for Vec<Value> {
         }
         Ok(())
     }
+
+    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), serde_json::Error> {
+        self.push(to_value(t)?);
+        Ok(())
+    }
+}
+
+/// Convert `Value` into `Vec<Value>`
+///
+/// # Panics
+///
+/// Panic if value is not of type `Value::Array`
+pub fn value_into_vec(value: Value) -> Vec<Value> {
+    if let Value::Array(v) = value {
+        return v;
+    }
+    panic!("value is not Value::Array");
 }
