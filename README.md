@@ -14,6 +14,13 @@ An aria2 websocket jsonrpc in Rust.
 ## Example
 
 ```rust
+use std::sync::Arc;
+
+use aria2_ws::{Client, TaskHooks, TaskOptions};
+use futures::FutureExt;
+use serde_json::json;
+use tokio::{spawn, sync::Semaphore};
+
 async fn example() {
     let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
         .await
@@ -23,7 +30,7 @@ async fn example() {
         header: Some(vec!["Referer: https://www.pixiv.net/".to_string()]),
         all_proxy: Some("http://127.0.0.1:10809".to_string()),
         // Add extra options which are not included in TaskOptions.
-        extra_options: json!({"max-download-limit": "100K"})
+        extra_options: json!({"max-download-limit": "200K"})
             .as_object()
             .unwrap()
             .clone(),
@@ -62,10 +69,11 @@ async fn example() {
         .await
         .unwrap();
 
+    // Will 404
     client
         .add_uri(
             vec![
-                "https://i.pximg.net/img-original/img/2022/01/05/23/32/16/95326322_p0.png"
+                "https://i.pximg.net/img-original/img/2022/01/05/23/32/16/95326322_p0.pngxxxx"
                     .to_string(),
             ],
             Some(options.clone()),

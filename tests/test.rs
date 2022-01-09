@@ -55,10 +55,11 @@ async fn example() {
         .await
         .unwrap();
 
+    // Will 404
     client
         .add_uri(
             vec![
-                "https://i.pximg.net/img-original/img/2022/01/05/23/32/16/95326322_p0.png"
+                "https://i.pximg.net/img-original/img/2022/01/05/23/32/16/95326322_p0.pngxxxx"
                     .to_string(),
             ],
             Some(options.clone()),

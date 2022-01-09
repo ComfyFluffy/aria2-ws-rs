@@ -42,6 +42,7 @@ pub struct RpcRequest {
     pub params: Vec<Value>,
 }
 
+/// Error returned by RPC calls.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Aria2Error {
     pub code: i32,
@@ -86,6 +87,18 @@ pub struct TaskOptions {
     pub dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub out: Option<String>,
+    #[serde(
+        with = "serde_option_from_str",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub r#continue: Option<bool>,
+    #[serde(
+        with = "serde_option_from_str",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub auto_file_renaming: Option<bool>,
     #[serde(flatten)]
     pub extra_options: Map<String, Value>,
 }
@@ -117,6 +130,9 @@ impl TaskOptions {
     set_self_some!(dir);
 }
 
+/// Hooks that will be executed on notifications.
+///
+/// If the connection lost, all hooks will be checked whether they need to be executed once reconnected.
 #[derive(Default)]
 pub struct TaskHooks {
     // pub on_start: Option<BoxFuture<'static, ()>>,
@@ -142,6 +158,9 @@ struct InnerClient {
     tx_not: broadcast::Sender<response::Notification>,
 }
 
+/// An aria2 websocket rpc client.
+///
+/// The client contains an `Arc<InnerClient>)` and can be cloned.
 #[derive(Clone)]
 pub struct Client(Arc<InnerClient>);
 
@@ -348,7 +367,6 @@ async fn read_worker(
 ) -> Result<(), Error> {
     while let Some(msg) = read.try_next().await? {
         let s = try_continue!(msg.to_text());
-        println!("{}", s);
         let v = try_continue!(serde_json::from_str::<Value>(s), s);
         if let Value::Object(obj) = &v {
             if obj.contains_key("method") {
@@ -389,7 +407,6 @@ async fn write_worker(
         select! {
             msg = rx_write.recv() => {
                 if let Some(msg) = msg {
-                    println!("{:?}", msg);
                     try_continue!(write.send(msg).await);
                     try_continue!(write.flush().await);
                 } else {
@@ -404,6 +421,29 @@ async fn write_worker(
 }
 
 impl Client {
+    /// Create a new `Client` and connect to the given url.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aria2_ws::Client;
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
+    ///         .await
+    ///         .unwrap();
+    ///     let gid = client
+    ///         .add_uri(
+    ///             vec!["https://go.dev/dl/go1.17.6.windows-amd64.msi".to_string()],
+    ///             None,
+    ///             None,
+    ///             None,
+    ///         )
+    ///         .await
+    ///         .unwrap();
+    ///     client.force_remove(gid).await.unwrap();
+    /// }
+    /// ```
     pub async fn connect(url: &str, token: Option<&str>) -> Result<Self, Error> {
         let (tx_write, mut rx_write) = mpsc::channel::<Message>(4);
         let subscribes: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>> =

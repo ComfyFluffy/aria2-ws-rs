@@ -131,16 +131,20 @@ impl Client {
         self.do_gid("forcePause", gid, None).await
     }
 
-    pub async fn force_pause_all(&self, gid: String) -> Result<()> {
-        self.do_gid("forcePauseAll", gid, None).await
+    pub async fn force_pause_all(&self) -> Result<()> {
+        self.call_and_subscribe::<String>("forcePauseAll", vec![], None)
+            .await?;
+        Ok(())
     }
 
     pub async fn unpause(&self, gid: String) -> Result<()> {
         self.do_gid("unpause", gid, None).await
     }
 
-    pub async fn unpause_all(&self, gid: String) -> Result<()> {
-        self.do_gid("unpauseAll", gid, None).await
+    pub async fn unpause_all(&self) -> Result<()> {
+        self.call_and_subscribe::<String>("unpauseAll", vec![], None)
+            .await?;
+        Ok(())
     }
 
     pub async fn custom_tell_status(

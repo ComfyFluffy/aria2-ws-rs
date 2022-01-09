@@ -8,7 +8,9 @@ pub struct Version {
     pub version: String,
 }
 
-/// https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus
+/// Full status of a task.
+///
+/// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus>
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -134,6 +136,8 @@ pub enum UriStatus {
     Waiting,
 }
 
+/// Task status returned by `aria2.tellStatus`.
+///
 /// `Active` for currently downloading/seeding downloads.
 ///
 /// `Waiting` for downloads in the queue; download is not started.
@@ -146,7 +150,7 @@ pub enum UriStatus {
 ///
 /// `Removed` for the downloads removed by user.
 ///
-/// https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus
+/// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus>
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
