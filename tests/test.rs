@@ -16,7 +16,7 @@ async fn example() {
         header: Some(vec!["Referer: https://www.pixiv.net/".to_string()]),
         all_proxy: Some("http://127.0.0.1:10809".to_string()),
         // Add extra options which are not included in TaskOptions.
-        extra_options: json!({"max-download-limit": "200K"})
+        extra_options: json!({"max-download-limit": "100K"})
             .as_object()
             .unwrap()
             .clone(),

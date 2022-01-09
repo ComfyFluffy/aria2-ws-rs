@@ -249,7 +249,29 @@ impl Client {
         self.call_and_subscribe("changeUri", params, None).await
     }
 
-    // TODO: getOption changeOption getGlobalOption changeGlobalOption
+    pub async fn get_option(&self, gid: String) -> Result<TaskOptions> {
+        self.call_and_subscribe("getOption", vec![Value::String(gid)], None)
+            .await
+    }
+
+    pub async fn change_option(&self, gid: String, options: TaskOptions) -> Result<()> {
+        self.call_and_subscribe(
+            "changeOption",
+            vec![Value::String(gid), to_value(options)?],
+            None,
+        )
+        .await
+    }
+
+    pub async fn get_global_option(&self) -> Result<TaskOptions> {
+        self.call_and_subscribe("getGlobalOption", vec![], None)
+            .await
+    }
+
+    pub async fn change_global_option(&self, options: TaskOptions) -> Result<()> {
+        self.call_and_subscribe("changeGlobalOption", vec![to_value(options)?], None)
+            .await
+    }
 
     pub async fn get_global_stat(&self) -> Result<response::GlobalStat> {
         self.call_and_subscribe("getGlobalStat", vec![], None).await

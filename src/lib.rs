@@ -178,67 +178,102 @@ pub struct RpcResponse {
     pub error: Option<Aria2Error>,
 }
 
-/// Options of aria2 download tasks.
+/// Regular options of aria2 download tasks.
 ///
-/// Add items to `extra_options` field to add custom options.
+/// For more options, add them to `extra_options` field, which is Object in `serde_json`.
+///
+/// You can find all options in <https://aria2.github.io/manual/en/html/aria2c.html#input-file>
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct TaskOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<Vec<String>>,
+
     #[serde(
         with = "serde_option_from_str",
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub split: Option<u32>,
+    pub split: Option<i32>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_proxy: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub out: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gid: Option<String>,
+
     #[serde(
         with = "serde_option_from_str",
         skip_serializing_if = "Option::is_none",
         default
     )]
     pub r#continue: Option<bool>,
+
     #[serde(
         with = "serde_option_from_str",
         skip_serializing_if = "Option::is_none",
         default
     )]
     pub auto_file_renaming: Option<bool>,
+
+    #[serde(
+        with = "serde_option_from_str",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub check_integrity: Option<bool>,
+
+    /// Close connection if download speed is lower than or equal to this value(bytes per sec).
+    ///
+    /// 0 means aria2 does not have a lowest speed limit.
+    ///
+    /// You can append K or M (1K = 1024, 1M = 1024K).
+    ///
+    /// This option does not affect BitTorrent downloads.
+    ///
+    /// Default: 0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lowest_speed_limit: Option<String>,
+
+    /// Set max download speed per each download in bytes/sec. 0 means unrestricted.
+    ///
+    /// You can append K or M (1K = 1024, 1M = 1024K).
+    ///
+    /// To limit the overall download speed, use --max-overall-download-limit option.
+    ///
+    /// Default: 0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_download_limit: Option<String>,
+
+    #[serde(
+        with = "serde_option_from_str",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub max_connection_per_server: Option<i32>,
+
+    #[serde(
+        with = "serde_option_from_str",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub max_tries: Option<i32>,
+
+    #[serde(
+        with = "serde_option_from_str",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub timeout: Option<i32>,
+
     #[serde(flatten)]
     pub extra_options: Map<String, Value>,
-}
-
-macro_rules! set_self_some {
-    ($t:ident) => {
-        pub fn $t(mut self, $t: String) -> Self {
-            self.$t = Some($t);
-            self
-        }
-    };
-    ($t:ident, $ty:ty) => {
-        pub fn $t(mut self, $t: $ty) -> Self {
-            self.$t = Some($t);
-            self
-        }
-    };
-}
-
-impl TaskOptions {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    set_self_some!(header, Vec<String>);
-    set_self_some!(split, u32);
-    set_self_some!(all_proxy);
-    set_self_some!(out);
-    set_self_some!(dir);
 }
 
 /// Hooks that will be executed on notifications.
