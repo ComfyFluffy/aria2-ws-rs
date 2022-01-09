@@ -37,13 +37,13 @@ impl InnerClient {
 
 /// The parameter `how` in `changePosition`.
 ///
-/// https://aria2.github.io/manual/en/html/aria2c.html#aria2.changePosition
+/// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.changePosition>
+#[allow(non_camel_case_types)]
 #[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PositionHow {
-    PosSet,
-    PosCur,
-    PosEnd,
+    POS_SET,
+    POS_CUR,
+    POS_END,
 }
 
 impl Client {
