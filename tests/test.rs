@@ -89,12 +89,8 @@ async fn example() {
     let mut not = client.subscribe_notifications();
 
     spawn(async move {
-        loop {
-            if let Ok(msg) = not.recv().await {
-                println!("Received notification {:?}", &msg);
-            } else {
-                return;
-            }
+        while let Ok(msg) = not.recv().await {
+            println!("Received notification {:?}", &msg);
         }
     });
 
