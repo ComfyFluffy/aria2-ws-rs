@@ -1,5 +1,8 @@
 use serde::Serialize;
 use serde_json::{to_value, Value};
+use snafu::ResultExt;
+
+use crate::{error, Error};
 
 pub mod serde_option_from_str {
     use std::{fmt::Display, str::FromStr};
@@ -109,32 +112,32 @@ pub mod serde_from_str {
 }
 
 pub trait PushExt {
-    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<(), serde_json::Error>;
+    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<(), Error>;
 
-    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<(), serde_json::Error>;
+    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<(), Error>;
 
-    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), serde_json::Error>;
+    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), Error>;
 }
 
 impl PushExt for Vec<Value> {
-    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<(), serde_json::Error> {
+    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<(), Error> {
         if let Some(t) = t {
-            self.push(to_value(t)?);
+            self.push(to_value(t).context(error::JsonSnafu)?);
         }
         Ok(())
     }
 
-    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<(), serde_json::Error> {
+    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<(), Error> {
         if let Some(t) = t {
-            self.push(to_value(t)?);
+            self.push(to_value(t).context(error::JsonSnafu)?);
         } else {
             self.push(v);
         }
         Ok(())
     }
 
-    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), serde_json::Error> {
-        self.push(to_value(t)?);
+    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), Error> {
+        self.push(to_value(t).context(error::JsonSnafu)?);
         Ok(())
     }
 }

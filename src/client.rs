@@ -4,17 +4,17 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, Weak};
 
-use std::time::Duration;
-
 use crate::response::Event;
-use crate::{Client, Error, Hooks, InnerClient, RpcRequest, RpcResponse, TaskHooks};
+use crate::{error, Client, Error, Hooks, InnerClient, RpcRequest, RpcResponse, TaskHooks};
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{StreamExt, TryStreamExt};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+use snafu::prelude::*;
 use std::sync::atomic::Ordering::SeqCst;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio::sync::{broadcast, Notify};
@@ -29,30 +29,19 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use crate::response::Notification;
 
 macro_rules! try_continue {
-    ($res:expr, $msg:expr) => {
-        match $res {
-            Ok(v) => v,
-            Err(err) => {
-                eprintln!("aria2: unexpected message: {}: {}", err, $msg);
-                continue;
-            }
-        }
-    };
-
     ($res:expr) => {
         match $res {
             Ok(v) => v,
             Err(err) => {
-                eprintln!("aria2 error: {}", err);
+                eprintln!("{}", err);
                 continue;
             }
         }
     };
 }
 
-async fn on_reconnect(inner_client: &Weak<InnerClient>) -> Result<(), Error> {
+async fn on_reconnect(inner_client: Weak<InnerClient>) -> Result<(), Error> {
     if let Some(client) = inner_client.upgrade() {
-        let err = "aria2: unexpected response";
         let mut res: HashMap<String, Map<String, Value>> = HashMap::new();
         for mut map in client
             .custom_tell_stopped(
@@ -70,7 +59,9 @@ async fn on_reconnect(inner_client: &Weak<InnerClient>) -> Result<(), Error> {
             let gid = if let Some(Value::String(s)) = map.remove("gid") {
                 s
             } else {
-                Err(err)?
+                Err(Error::ReconnectHook {
+                    message: format!("unexpected response: {:?}", map),
+                })?
             };
             res.insert(gid, map);
         }
@@ -136,17 +127,8 @@ fn process_nofitications(notification: &Notification, hooks: &Hooks) -> Result<(
     Ok(())
 }
 
-fn get_gid_from_notifictaion(req: &RpcRequest) -> Result<&str, Error> {
-    let err = "aria2: unexpected notification";
-    let gid = req
-        .params
-        .get(0)
-        .ok_or(err)?
-        .get("gid")
-        .ok_or(err)?
-        .as_str()
-        .ok_or(err)?;
-    Ok(gid)
+fn get_gid_from_notifictaion(req: &RpcRequest) -> Option<&str> {
+    req.params.get(0)?.get("gid")?.as_str()
 }
 
 impl InnerClient {
@@ -165,20 +147,30 @@ impl InnerClient {
         let (tx, rx) = oneshot::channel();
         self.subscribes.lock().unwrap().insert(id, tx);
         let timeout = timeout.unwrap_or(self.default_timeout);
+        let subscribes = self.subscribes.clone();
 
         async move {
             let res = if timeout.is_zero() {
-                rx.await?
+                rx.await.context(error::OneshotRecvSnafu)?
             } else {
-                tokio::time::timeout(timeout, rx).await??
+                match tokio::time::timeout(timeout, rx).await {
+                    Ok(r) => r.context(error::OneshotRecvSnafu)?,
+                    Err(e) => {
+                        subscribes.lock().unwrap().remove(&id);
+                        Err(Error::Timeout { source: e })?
+                    }
+                }
             };
 
             if let Some(err) = res.error {
-                Err(err)?;
+                return Err(Error::Aria2 { source: err });
             }
 
-            let v = res.result.ok_or("aria2: result not found")?;
-            Ok(serde_json::from_value::<T>(v)?)
+            if let Some(v) = res.result {
+                Ok(serde_json::from_value::<T>(v).context(error::JsonSnafu)?)
+            } else {
+                error::ResultNotFoundSnafu { response: res }.fail()
+            }
         }
         .boxed()
     }
@@ -194,8 +186,11 @@ impl InnerClient {
             params,
         };
         self.tx_write
-            .send(Message::Text(serde_json::to_string(&req)?))
-            .await?;
+            .send(Message::Text(
+                serde_json::to_string(&req).context(error::JsonSnafu)?,
+            ))
+            .await
+            .context(error::MpscSendMessageSnafu)?;
         Ok(())
     }
 
@@ -221,29 +216,29 @@ async fn read_worker(
     hooks: Hooks,
     tx_not: broadcast::Sender<Notification>,
 ) -> Result<(), Error> {
-    while let Some(msg) = read.try_next().await? {
+    while let Some(msg) = read.try_next().await.context(error::WebsocketSnafu)? {
         let s = try_continue!(msg.to_text());
-        let v = try_continue!(serde_json::from_str::<Value>(s), s);
+        let v = try_continue!(serde_json::from_str::<Value>(s));
         if let Value::Object(obj) = &v {
             if obj.contains_key("method") {
                 // The message is a notification.
                 // https://aria2.github.io/manual/en/html/aria2c.html#notifications
-                let req: RpcRequest = try_continue!(serde_json::from_value(v), s);
-                let gid = try_continue!(get_gid_from_notifictaion(&req), s);
+                let errf = || error::UnexpectedMessageSnafu { msg: msg.clone() };
+                let req: RpcRequest =
+                    try_continue!(serde_json::from_value(v).context(error::JsonSnafu));
+                let gid = try_continue!(get_gid_from_notifictaion(&req).with_context(errf));
                 let not = try_continue!(
-                    Notification::new(gid.to_string(), &req.method)
-                        .ok_or("unexpected notificaiton"),
-                    s
+                    Notification::new(gid.to_string(), &req.method).with_context(errf)
                 );
 
-                try_continue!(process_nofitications(&not, &hooks), s);
+                try_continue!(process_nofitications(&not, &hooks));
 
                 let _ = tx_not.send(not);
                 continue;
             }
         }
 
-        let res: RpcResponse = try_continue!(serde_json::from_value(v), s);
+        let res: RpcResponse = try_continue!(serde_json::from_value(v).context(error::JsonSnafu));
         if let Some(ref id) = res.id {
             let tx = subscribes.lock().unwrap().remove(id);
             if let Some(tx) = tx {
@@ -264,7 +259,6 @@ async fn write_worker(
             msg = rx_write.recv() => {
                 if let Some(msg) = msg {
                     try_continue!(write.send(msg).await);
-                    try_continue!(write.flush().await);
                 } else {
                     return rx_write;
                 }
@@ -322,48 +316,47 @@ impl Client {
             tx_not: tx_not.clone(),
         });
 
-        {
-            let inner_weak = Arc::downgrade(&inner);
-            spawn(async move {
-                let mut reconnect = false;
-                loop {
-                    match tokio_tungstenite::connect_async(&url).await {
-                        Ok((ws, _)) => {
-                            let (write, read) = ws.split();
-                            if reconnect {
-                                let _ = on_reconnect(&inner_weak).await;
-                            } else {
-                                reconnect = true;
-                            }
-                            let read_fut = read_worker(
-                                read,
-                                subscribes.clone(),
-                                hooks.clone(),
-                                tx_not.clone(),
-                            );
-
-                            let exit = Arc::new(Notify::new());
-                            let write_fut = spawn(write_worker(write, rx_write, exit.clone()));
-
-                            select! {
-                                result = read_fut => {
-                                    eprintln!("aria2 disconnected: {:?}", result);
-                                    exit.notify_waiters();
-                                    rx_write = write_fut.await.unwrap();
-                                },
-                                _ = shutdown.notified() => {
-                                    return;
-                                }
-                            }
+        let inner_weak = Arc::downgrade(&inner);
+        spawn(async move {
+            let mut reconnect = false;
+            loop {
+                let connected = select! {
+                    r = tokio_tungstenite::connect_async(&url) => r,
+                    _ = shutdown.notified() => return,
+                };
+                match connected {
+                    Ok((ws, _)) => {
+                        let (write, read) = ws.split();
+                        if reconnect {
+                            spawn(on_reconnect(inner_weak.clone()));
+                        } else {
+                            reconnect = true;
                         }
-                        Err(err) => {
-                            eprintln!("aria2: connect failed: {}", err);
-                            sleep(Duration::from_secs(3)).await;
+                        let read_fut =
+                            read_worker(read, subscribes.clone(), hooks.clone(), tx_not.clone());
+
+                        let exit = Arc::new(Notify::new());
+                        let write_fut = spawn(write_worker(write, rx_write, exit.clone()));
+
+                        select! {
+                            result = read_fut => {
+                                eprintln!("aria2 disconnected: {:?}", result);
+                                exit.notify_waiters();
+                                rx_write = write_fut.await.unwrap();
+                            },
+                            _ = shutdown.notified() => {
+                                exit.notify_waiters();
+                                return;
+                            }
                         }
                     }
+                    Err(err) => {
+                        eprintln!("aria2: connect failed: {}", err);
+                        sleep(Duration::from_secs(3)).await;
+                    }
                 }
-            });
-        }
+            }
+        });
 
         Ok(Self(inner))
     }

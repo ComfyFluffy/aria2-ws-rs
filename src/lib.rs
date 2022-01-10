@@ -121,9 +121,12 @@
 //! ```
 
 mod client;
+pub mod error;
 mod method;
 pub mod response;
 mod utils;
+
+pub use error::Error;
 
 use std::collections::{HashMap, HashSet};
 
@@ -330,5 +333,3 @@ impl Drop for InnerClient {
         self.shutdown.notify_waiters();
     }
 }
-
-type Error = Box<dyn std::error::Error + Send + Sync>;

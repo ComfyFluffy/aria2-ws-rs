@@ -1,6 +1,6 @@
 [package]
 name = "aria2-ws"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "An aria2 websocket jsonrpc API with notification support"
 readme = "README.md"
@@ -20,3 +20,4 @@ serde_json = "1"
 tokio-tungstenite = "0.16"
 futures = "0.3"
 base64 = "0.13"
+snafu = "0.7"

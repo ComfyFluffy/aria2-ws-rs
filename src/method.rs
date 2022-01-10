@@ -1,13 +1,13 @@
 use std::time::Duration;
 
-use serde::Serialize;
-use serde_json::{json, to_value, Map, Value};
-
 use crate::{
-    response,
+    error, response,
     utils::{value_into_vec, PushExt},
     Client, Error, InnerClient, TaskHooks, TaskOptions,
 };
+use serde::Serialize;
+use serde_json::{json, to_value, Map, Value};
+use snafu::prelude::*;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -58,7 +58,7 @@ impl Client {
         position: Option<u32>,
         hooks: Option<TaskHooks>,
     ) -> Result<String> {
-        let mut params = vec![to_value(uris)?];
+        let mut params = vec![to_value(uris).context(error::JsonSnafu)?];
         params.push_else(options, json!({}))?;
         params.push_some(position)?;
 
@@ -257,7 +257,10 @@ impl Client {
     pub async fn change_option(&self, gid: String, options: TaskOptions) -> Result<()> {
         self.call_and_subscribe(
             "changeOption",
-            vec![Value::String(gid), to_value(options)?],
+            vec![
+                Value::String(gid),
+                to_value(options).context(error::JsonSnafu)?,
+            ],
             None,
         )
         .await
@@ -269,8 +272,12 @@ impl Client {
     }
 
     pub async fn change_global_option(&self, options: TaskOptions) -> Result<()> {
-        self.call_and_subscribe("changeGlobalOption", vec![to_value(options)?], None)
-            .await
+        self.call_and_subscribe(
+            "changeGlobalOption",
+            vec![to_value(options).context(error::JsonSnafu)?],
+            None,
+        )
+        .await
     }
 
     pub async fn get_global_stat(&self) -> Result<response::GlobalStat> {
