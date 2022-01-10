@@ -121,7 +121,7 @@
 //! ```
 
 mod client;
-pub mod error;
+mod error;
 mod method;
 pub mod response;
 mod utils;
