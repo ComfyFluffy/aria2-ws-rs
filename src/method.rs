@@ -301,15 +301,13 @@ impl Client {
             .await
     }
 
-    /// Call `aria2.shutdown` and drop the client.
-    pub async fn shutdown(self) -> Result<()> {
+    pub async fn shutdown(&self) -> Result<()> {
         self.call_and_subscribe::<String>("shutdown", vec![], None)
             .await?;
         Ok(())
     }
 
-    /// Call `aria2.forceShutdown` and drop the client.
-    pub async fn force_shutdown(self) -> Result<()> {
+    pub async fn force_shutdown(&self) -> Result<()> {
         self.call_and_subscribe::<String>("forceShutdown", vec![], None)
             .await?;
         Ok(())
