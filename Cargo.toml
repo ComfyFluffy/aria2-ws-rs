@@ -1,9 +1,8 @@
 [package]
 name = "aria2-ws"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "An aria2 websocket jsonrpc API with notification support"
-readme = "README.md"
 repository = "https://github.com/WOo0W/aria2-ws-rs"
 license = "MIT"
 keywords = ["aria2", "jsonrpc"]
@@ -21,3 +20,4 @@ tokio-tungstenite = "0.16"
 futures = "0.3"
 base64 = "0.13"
 snafu = "0.7"
+log = "0.4"

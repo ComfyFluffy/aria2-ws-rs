@@ -10,6 +10,7 @@ use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{StreamExt, TryStreamExt};
+use log::warn;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use snafu::prelude::*;
@@ -33,7 +34,7 @@ macro_rules! try_continue {
         match $res {
             Ok(v) => v,
             Err(err) => {
-                eprintln!("{}", err);
+                warn!("{}", err);
                 continue;
             }
         }
@@ -340,7 +341,7 @@ impl Client {
 
                         select! {
                             result = read_fut => {
-                                eprintln!("aria2 disconnected: {:?}", result);
+                                warn!("aria2 disconnected: {:?}", result);
                                 exit.notify_waiters();
                                 rx_write = write_fut.await.unwrap();
                             },
@@ -351,7 +352,7 @@ impl Client {
                         }
                     }
                     Err(err) => {
-                        eprintln!("aria2: connect failed: {}", err);
+                        warn!("aria2: connect failed: {}", err);
                         sleep(Duration::from_secs(3)).await;
                     }
                 }
