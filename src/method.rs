@@ -108,7 +108,7 @@ impl Client {
     }
 
     pub async fn remove(&self, gid: String) -> Result<()> {
-        self.do_gid("remove", gid, Some(self.0.extendet_timeout))
+        self.do_gid("remove", gid, Some(self.0.extended_timeout))
             .await
     }
 
@@ -117,12 +117,12 @@ impl Client {
     }
 
     pub async fn pause(&self, gid: String) -> Result<()> {
-        self.do_gid("pause", gid, Some(self.0.extendet_timeout))
+        self.do_gid("pause", gid, Some(self.0.extended_timeout))
             .await
     }
 
     pub async fn pause_all(&self) -> Result<()> {
-        self.call_and_subscribe::<String>("pauseAll", vec![], Some(self.0.extendet_timeout))
+        self.call_and_subscribe::<String>("pauseAll", vec![], Some(self.0.extended_timeout))
             .await?;
         Ok(())
     }
@@ -302,7 +302,7 @@ impl Client {
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        self.call_and_subscribe::<String>("shutdown", vec![], None)
+        self.call_and_subscribe::<String>("shutdown", vec![], Some(self.0.extended_timeout))
             .await?;
         Ok(())
     }

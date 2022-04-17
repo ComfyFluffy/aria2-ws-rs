@@ -7,6 +7,14 @@ use tokio::{spawn, sync::Semaphore};
 
 #[tokio::test]
 #[ignore]
+async fn drop_test() {
+    Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore]
 async fn example() {
     let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
         .await

@@ -13,9 +13,9 @@ pub enum Error {
     Aria2 {
         source: crate::Aria2Error,
     },
-    #[snafu(display("aria2: unexpected message received: {msg:?}"))]
+    #[snafu(display("aria2: unexpected message received: {message:?}"))]
     UnexpectedMessage {
-        msg: Message,
+        message: String,
     },
 
     ResultNotFound {

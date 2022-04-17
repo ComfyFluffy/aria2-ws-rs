@@ -288,18 +288,24 @@ pub struct TaskHooks {
     // pub on_bt_complete: Option<BoxFuture<'static, ()>>,
 }
 
+impl TaskHooks {
+    pub fn is_some(&self) -> bool {
+        self.on_complete.is_some() || self.on_error.is_some()
+    }
+}
+
 type Hooks = Arc<Mutex<(HashMap<String, TaskHooks>, HashMap<String, HashSet<Event>>)>>;
 
 struct InnerClient {
     token: Option<String>,
     tx_write: mpsc::Sender<Message>,
     id: AtomicU64,
-    subscribes: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
+    subscriptions: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
     shutdown: Arc<Notify>,
     // hooks and pending events
     hooks: Hooks,
     default_timeout: Duration,
-    extendet_timeout: Duration,
+    extended_timeout: Duration,
     tx_not: broadcast::Sender<response::Notification>,
 }
 
@@ -326,6 +332,7 @@ pub struct Client(Arc<InnerClient>);
 
 impl Drop for InnerClient {
     fn drop(&mut self) {
+        // notify all spawned tasks to shutdown
         self.shutdown.notify_waiters();
     }
 }
