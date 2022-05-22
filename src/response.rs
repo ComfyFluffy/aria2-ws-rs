@@ -111,22 +111,22 @@ pub enum BitTorrentFileMode {
 #[serde(rename_all = "camelCase")]
 pub struct File {
     #[serde(with = "serde_from_str")]
-    index: u64,
-    path: String,
+    pub index: u64,
+    pub path: String,
     #[serde(with = "serde_from_str")]
-    length: u64,
+    pub length: u64,
     #[serde(with = "serde_from_str")]
-    completed_length: u64,
+    pub completed_length: u64,
     #[serde(with = "serde_from_str")]
-    selected: bool,
-    uris: Vec<Uri>,
+    pub selected: bool,
+    pub uris: Vec<Uri>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Uri {
-    status: UriStatus,
-    uri: String,
+    pub status: UriStatus,
+    pub uri: String,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -186,40 +186,40 @@ pub struct Peer {
 #[serde(rename_all = "camelCase")]
 pub struct GlobalStat {
     #[serde(with = "serde_from_str")]
-    download_speed: u64,
+    pub download_speed: u64,
     #[serde(with = "serde_from_str")]
-    upload_speed: u64,
+    pub upload_speed: u64,
     #[serde(with = "serde_from_str")]
-    num_active: i32,
+    pub num_active: i32,
     #[serde(with = "serde_from_str")]
-    num_waiting: i32,
+    pub num_waiting: i32,
     #[serde(with = "serde_from_str")]
-    num_stopped: i32,
+    pub num_stopped: i32,
     #[serde(with = "serde_from_str")]
-    num_stopped_total: i32,
+    pub num_stopped_total: i32,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
-    session_id: String,
+    pub session_id: String,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GetServersResult {
     #[serde(with = "serde_from_str")]
-    index: i32,
-    servers: Vec<Server>,
+    pub index: i32,
+    pub servers: Vec<Server>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Server {
-    uri: String,
-    current_uri: String,
+    pub uri: String,
+    pub current_uri: String,
     #[serde(with = "serde_from_str")]
-    download_speed: u64,
+    pub download_speed: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
