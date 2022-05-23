@@ -8,6 +8,8 @@ Built with `tokio`.
 
 [aria2 RPC docs](https://aria2.github.io/manual/en/html/aria2c.html#methods)
 
+[Changelog](./CHANGELOG.md)
+
 ## Features
 
 - Almost all methods and structed responses

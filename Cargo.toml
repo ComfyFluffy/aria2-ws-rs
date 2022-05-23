@@ -1,6 +1,6 @@
 [package]
 name = "aria2-ws"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "An aria2 websocket jsonrpc API with notification support"
 repository = "https://github.com/WOo0W/aria2-ws-rs"
