@@ -1,28 +1,37 @@
-use crate::utils::{serde_from_str, serde_option_from_str};
-use serde::Deserialize;
+use chrono::serde::ts_seconds;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Version {
     pub enabled_features: Vec<String>,
+
     pub version: String,
 }
 
 /// Full status of a task.
 ///
 /// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus>
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     /// GID of the download.
     pub gid: String,
+
     pub status: TaskStatus,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub total_length: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub completed_length: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub upload_length: u64,
+
     /// Hexadecimal representation of the download progress.
     ///
     /// The highest bit corresponds to the piece at index 0.
@@ -34,24 +43,37 @@ pub struct Status {
     ///
     /// When the download was not started yet,
     /// this key will not be included in the response.
-    pub bitfield: String,
-    #[serde(with = "serde_from_str")]
+    pub bitfield: Option<String>,
+
+    #[serde_as(as = "DisplayFromStr")]
     pub download_speed: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub upload_speed: u64,
+
     /// InfoHash. BitTorrent only
     pub info_hash: Option<String>,
-    #[serde(with = "serde_option_from_str", default)]
+
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default)]
     pub num_seeders: Option<u64>,
+
     /// true if the local endpoint is a seeder. Otherwise false. BitTorrent only.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default)]
     pub seeder: Option<bool>,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub piece_length: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub num_pieces: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub connections: u64,
+
     pub error_code: Option<String>,
+
     pub error_message: Option<String>,
     /// List of GIDs which are generated as the result of this download.
     ///
@@ -62,10 +84,12 @@ pub struct Status {
     ///
     /// If there are no such downloads, this key will not be included in the response.
     pub followed_by: Option<Vec<String>>,
+
     /// The reverse link for followedBy.
     ///
     /// A download included in followedBy has this object's GID in its following value.
     pub following: Option<String>,
+
     /// GID of a parent download.
     ///
     /// Some downloads are a part of another download.
@@ -75,61 +99,78 @@ pub struct Status {
     ///
     /// If this download has no parent, this key will not be included in the response.
     pub belongs_to: Option<String>,
+
     pub dir: String,
+
     pub files: Vec<File>,
+
     pub bittorrent: Option<BittorrentStatus>,
+
     /// The number of verified number of bytes while the files are being hash checked.
     ///
     /// This key exists only when this download is being hash checked.
-    #[serde(with = "serde_option_from_str", default)]
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default)]
     pub verified_length: Option<u64>,
+
     /// `true` if this download is waiting for the hash check in a queue.
     ///
     /// This key exists only when this download is in the queue.
-    #[serde(with = "serde_option_from_str", default)]
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default)]
     pub verify_integrity_pending: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BittorrentStatus {
     pub announce_list: Vec<String>,
+
     pub comment: Option<String>,
-    #[serde(with = "serde_from_str")]
-    pub creation_date: u64,
-    pub mode: BitTorrentFileMode,
+
+    #[serde(with = "ts_seconds")]
+    pub creation_date: DateTime<Utc>,
+
+    pub mode: Option<BitTorrentFileMode>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum BitTorrentFileMode {
     Single,
     Multi,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
-    #[serde(with = "serde_from_str")]
+    #[serde_as(as = "DisplayFromStr")]
     pub index: u64,
+
     pub path: String,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub length: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub completed_length: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub selected: bool,
+
     pub uris: Vec<Uri>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Uri {
     pub status: UriStatus,
+
     pub uri: String,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum UriStatus {
     Used,
@@ -151,7 +192,7 @@ pub enum UriStatus {
 /// `Removed` for the downloads removed by user.
 ///
 /// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus>
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
     Active,
@@ -162,63 +203,83 @@ pub enum TaskStatus {
     Removed,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Peer {
-    #[serde(with = "serde_from_str")]
+    #[serde_as(as = "DisplayFromStr")]
     pub am_choking: bool,
+
     pub bitfield: String,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub download_speed: u64,
+
     pub ip: String,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub peer_choking: bool,
+
     pub peer_id: String,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub port: u16,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub seeder: bool,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub upload_speed: u64,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalStat {
-    #[serde(with = "serde_from_str")]
+    #[serde_as(as = "DisplayFromStr")]
     pub download_speed: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub upload_speed: u64,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub num_active: i32,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub num_waiting: i32,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub num_stopped: i32,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub num_stopped_total: i32,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub session_id: String,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GetServersResult {
-    #[serde(with = "serde_from_str")]
+    #[serde_as(as = "DisplayFromStr")]
     pub index: i32,
+
     pub servers: Vec<Server>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Server {
     pub uri: String,
+
     pub current_uri: String,
-    #[serde(with = "serde_from_str")]
+
+    #[serde_as(as = "DisplayFromStr")]
     pub download_speed: u64,
 }
 
@@ -236,6 +297,7 @@ pub enum Event {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Notification {
     pub gid: String,
+
     pub event: Event,
 }
 

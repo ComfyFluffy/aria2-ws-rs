@@ -30,7 +30,6 @@ async fn example() {
             .clone(),
         ..Default::default()
     };
-
     // use `tokio::sync::Semaphore` to wait for all tasks to finish.
     let semaphore = Arc::new(Semaphore::new(0));
     client

@@ -369,11 +369,12 @@ impl Client {
 
                         select! {
                             result = read_fut => {
-                                info!("aria2 disconnected: {:?}", result);
+                                debug!("aria2 disconnected: {:?}", result);
                                 exit.notify_waiters();
                                 // notify write_worker to exit.
                                 rx_write = write_fut.await.unwrap();
                                 // re-initialize rx_write for the next connection.
+                                sleep(Duration::from_secs(1)).await;
                             },
                             _ = shutdown.notified() => {
                                 debug!("aria2 client is exiting");
@@ -413,6 +414,7 @@ impl Client {
         self.0.call_and_subscribe(method, params, timeout).await
     }
 
+    /// Set hook for task with given gid.
     pub async fn set_hooks(&self, gid: &str, hooks: Option<TaskHooks>) {
         if let Some(mut hooks) = hooks {
             if !hooks.is_some() {
