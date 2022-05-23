@@ -15,7 +15,7 @@ env_logger = "0.9"
 test-log = "0.2"
 
 [dependencies]
-tokio = { version = "1", features = ["sync", "time", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio-tungstenite = "0.17"
