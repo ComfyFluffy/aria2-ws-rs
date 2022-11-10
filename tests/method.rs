@@ -36,19 +36,19 @@ async fn test_global(c: &Client) -> Result<()> {
 }
 
 async fn test_metadata(c: &Client, gid: &str) -> Result<()> {
-    let r = c.get_option(&gid).await?;
+    let r = c.get_option(gid).await?;
     println!("{:?}\n", r);
 
-    let r = c.get_files(&gid).await?;
+    let r = c.get_files(gid).await?;
     println!("{:?}\n", r);
 
-    let r = c.get_peers(&gid).await?;
+    let r = c.get_peers(gid).await?;
     println!("{:?}\n", r);
 
-    let r = c.get_servers(&gid).await?;
+    let r = c.get_servers(gid).await?;
     println!("{:?}\n", r);
 
-    let r = c.get_uris(&gid).await?;
+    let r = c.get_uris(gid).await?;
     println!("{:?}\n", r);
 
     Ok(())
@@ -111,10 +111,7 @@ async fn http() -> Result<()> {
 
     let gid = c
         .add_uri(
-            vec![
-                "https://mirror.hoster.kz/archlinux/iso/2022.04.05/archlinux-2022.04.05-x86_64.iso"
-                    .to_string(),
-            ],
+            vec!["https://mirror.hoster.kz/archlinux/iso/latest/archlinux-x86_64.iso".to_string()],
             Some(options),
             None,
             None,

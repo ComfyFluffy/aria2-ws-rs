@@ -9,7 +9,7 @@ use serde_with::{serde_as, skip_serializing_none, DisplayFromStr};
 /// You can find all options in <https://aria2.github.io/manual/en/html/aria2c.html#input-file>
 #[serde_as]
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct TaskOptions {
     pub header: Option<Vec<String>>,

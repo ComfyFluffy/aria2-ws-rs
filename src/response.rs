@@ -15,7 +15,7 @@ pub struct Version {
 ///
 /// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus>
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     /// GID of the download.
@@ -121,7 +121,7 @@ pub struct Status {
     pub verify_integrity_pending: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BittorrentStatus {
     pub announce_list: Vec<String>,
@@ -134,7 +134,7 @@ pub struct BittorrentStatus {
     pub mode: Option<BitTorrentFileMode>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum BitTorrentFileMode {
     Single,
@@ -142,7 +142,7 @@ pub enum BitTorrentFileMode {
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
     #[serde_as(as = "DisplayFromStr")]
@@ -162,7 +162,7 @@ pub struct File {
     pub uris: Vec<Uri>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Uri {
     pub status: UriStatus,
@@ -170,7 +170,7 @@ pub struct Uri {
     pub uri: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum UriStatus {
     Used,
@@ -192,7 +192,7 @@ pub enum UriStatus {
 /// `Removed` for the downloads removed by user.
 ///
 /// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.tellStatus>
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
     Active,
@@ -204,7 +204,7 @@ pub enum TaskStatus {
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Peer {
     #[serde_as(as = "DisplayFromStr")]
@@ -233,7 +233,7 @@ pub struct Peer {
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalStat {
     #[serde_as(as = "DisplayFromStr")]
@@ -255,14 +255,14 @@ pub struct GlobalStat {
     pub num_stopped_total: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub session_id: String,
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GetServersResult {
     #[serde_as(as = "DisplayFromStr")]
@@ -272,7 +272,7 @@ pub struct GetServersResult {
 }
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Server {
     pub uri: String,
@@ -294,7 +294,7 @@ pub enum Event {
     BtComplete,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notification {
     pub gid: String,
 

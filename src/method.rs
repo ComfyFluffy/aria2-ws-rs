@@ -41,7 +41,7 @@ impl InnerClient {
 ///
 /// <https://aria2.github.io/manual/en/html/aria2c.html#aria2.changePosition>
 #[allow(non_camel_case_types)]
-#[derive(Serialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum PositionHow {
     POS_SET,
     POS_CUR,
