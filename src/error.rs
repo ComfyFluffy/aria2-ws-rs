@@ -1,42 +1,17 @@
 use snafu::prelude::*;
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::error::Elapsed,
-};
-use tokio_tungstenite::tungstenite::{Error as WsError, Message};
-
-use crate::RpcResponse;
+use tokio_tungstenite::tungstenite::Error as WsError;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum Error {
-    Aria2 {
-        source: crate::Aria2Error,
-    },
-    #[snafu(display("aria2: unexpected message received: {message:?}"))]
-    UnexpectedMessage {
-        message: String,
-    },
-
-    ResultNotFound {
-        response: RpcResponse,
-    },
-    Websocket {
-        source: WsError,
-    },
-    Json {
-        source: serde_json::Error,
-    },
-    Timeout {
-        source: Elapsed,
-    },
-    OneshotRecv {
-        source: oneshot::error::RecvError,
-    },
-    MpscSendMessage {
-        source: mpsc::error::SendError<Message>,
-    },
-    ReconnectHook {
-        message: String,
-    },
+    #[snafu(display("aria2 responsed error: {source}"))]
+    Aria2 { source: crate::Aria2Error },
+    #[snafu(display("aria2: cannot parse value {value:?} as {to}"))]
+    Parse { value: String, to: String },
+    #[snafu(display("aria2: websocket error: {source}"))]
+    WebsocketIo { source: WsError },
+    #[snafu(display("aria2: json error: {source}"))]
+    Json { source: serde_json::Error },
+    #[snafu(display("aria2: websocket closed: {message}"))]
+    WebsocketClosed { message: String },
 }

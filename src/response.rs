@@ -2,6 +2,9 @@ use chrono::serde::ts_seconds;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
+use snafu::OptionExt;
+
+use crate::{error, RpcRequest};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -294,41 +297,41 @@ pub enum Event {
     BtComplete,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Notification {
-    pub gid: String,
+impl TryFrom<&str> for Event {
+    type Error = crate::Error;
 
-    pub event: Event,
-}
-
-impl Notification {
-    pub fn new(gid: String, method: &str) -> Option<Self> {
+    fn try_from(value: &str) -> Result<Self, crate::Error> {
         use Event::*;
-        let event = match method {
+        let event = match value {
             "aria2.onDownloadStart" => Start,
             "aria2.onDownloadPause" => Pause,
             "aria2.onDownloadStop" => Stop,
             "aria2.onDownloadComplete" => Complete,
             "aria2.onDownloadError" => Error,
             "aria2.onBtDownloadComplete" => BtComplete,
-            _ => return None,
+            _ => return error::ParseSnafu { value, to: "Event" }.fail(),
         };
-        Some(Self { gid, event })
+        Ok(event)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::response::{Event, Notification};
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Notification {
+    Aria2 { gid: String, event: Event },
+    WebsocketClosed,
+}
 
-    #[test]
-    fn event() {
-        let not = Notification::new("a".to_string(), "aria2.onBtDownloadComplete").unwrap();
-        let x = &not;
-        let y = x.event;
-        assert!(matches!(
-            y,
-            Event::BtComplete | Event::Complete | Event::Error
-        ));
+impl TryFrom<&RpcRequest> for Notification {
+    type Error = crate::Error;
+
+    fn try_from(req: &RpcRequest) -> Result<Self, crate::Error> {
+        let gid = (|| req.params.get(0)?.get("gid")?.as_str())()
+            .with_context(|| error::ParseSnafu {
+                value: format!("{:?}", req),
+                to: "Notification",
+            })?
+            .to_string();
+        let event = req.method.as_str().try_into()?;
+        Ok(Notification::Aria2 { gid, event })
     }
 }

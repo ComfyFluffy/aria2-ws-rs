@@ -122,33 +122,29 @@ mod method;
 pub mod options;
 pub mod response;
 mod utils;
+use log::debug;
 pub use options::TaskOptions;
 
 pub use error::Error;
 
 // Re-export `Map` for `TaskOptions`.
 pub use serde_json::Map;
+use tokio_tungstenite::tungstenite::Message;
 
-use std::collections::{HashMap, HashSet};
-
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
-
-use std::time::Duration;
+use std::sync::atomic::AtomicI32;
+use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use response::Event;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use tokio::sync::{broadcast, Notify};
 
 use tokio::sync::{mpsc, oneshot};
-use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
-    pub id: Option<u64>,
+    pub id: Option<i32>,
     pub jsonrpc: String,
     pub method: String,
     #[serde(default)]
@@ -174,7 +170,7 @@ impl std::error::Error for Aria2Error {}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct RpcResponse {
-    pub id: Option<u64>,
+    pub id: Option<i32>,
     pub jsonrpc: String,
     pub result: Option<Value>,
     pub error: Option<Aria2Error>,
@@ -184,7 +180,7 @@ pub struct RpcResponse {
 ///
 /// If the connection lost, all hooks will be checked whether they need to be executed once reconnected.
 #[derive(Default)]
-pub struct TaskHooks {
+pub struct TaskCallbacks {
     // pub on_start: Option<BoxFuture<'static, ()>>,
     // pub on_pause: Option<BoxFuture<'static, ()>>,
     // pub on_stop: Option<BoxFuture<'static, ()>>,
@@ -193,25 +189,21 @@ pub struct TaskHooks {
     // pub on_bt_complete: Option<BoxFuture<'static, ()>>,
 }
 
-impl TaskHooks {
+impl TaskCallbacks {
     pub fn is_some(&self) -> bool {
         self.on_complete.is_some() || self.on_error.is_some()
     }
 }
 
-type Hooks = Arc<Mutex<(HashMap<String, TaskHooks>, HashMap<String, HashSet<Event>>)>>;
-
 struct InnerClient {
     token: Option<String>,
-    tx_write: mpsc::Sender<Message>,
-    id: AtomicU64,
-    subscriptions: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
+    id: AtomicI32, // TODO: test negative id
+    /// Channel for sending messages to the websocket.
+    tx_ws_sink: mpsc::Sender<Message>,
+    tx_notification: broadcast::Sender<response::Notification>,
+    tx_subscribe: mpsc::Sender<(i32, oneshot::Sender<RpcResponse>)>,
+    /// On notified, all spawned tasks shut down.
     shutdown: Arc<Notify>,
-    // hooks and pending events
-    hooks: Hooks,
-    default_timeout: Duration,
-    extended_timeout: Duration,
-    tx_not: broadcast::Sender<response::Notification>,
 }
 
 /// An aria2 websocket rpc client.
@@ -238,6 +230,16 @@ pub struct Client(Arc<InnerClient>);
 impl Drop for InnerClient {
     fn drop(&mut self) {
         // notify all spawned tasks to shutdown
+        debug!("InnerClient dropped, notify shutdown");
         self.shutdown.notify_waiters();
+    }
+}
+
+mod tests {
+    fn check_if_send<T: Send + Sync>() {}
+
+    fn t() {
+        check_if_send::<crate::error::Error>();
+        check_if_send::<crate::Client>();
     }
 }

@@ -1,50 +1,36 @@
-use crate::{
-    error, response::Event, Client, Error, Hooks, InnerClient, RpcRequest, RpcResponse, TaskHooks,
-};
-use futures::{
-    future::BoxFuture,
-    prelude::*,
-    stream::{SplitSink, SplitStream},
-    StreamExt, TryStreamExt,
-};
+use crate::{error, Client, Error, InnerClient, RpcRequest, RpcResponse, TaskCallbacks};
+use futures::prelude::*;
 use log::{debug, info};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use snafu::prelude::*;
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     sync::{
-        atomic::{AtomicU64, Ordering::SeqCst},
-        Arc, Mutex, Weak,
+        atomic::{
+            AtomicI32,
+            Ordering::{self},
+        },
+        Arc, Weak,
     },
     time::Duration,
 };
 use tokio::{
-    net::TcpStream,
     select, spawn,
     sync::{broadcast, mpsc, oneshot, Notify},
     time::sleep,
 };
-use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::response::Notification;
 
-macro_rules! try_continue {
-    ($res:expr) => {
-        match $res {
-            Ok(v) => v,
-            Err(err) => {
-                info!("{}", err);
-                continue;
-            }
-        }
-    };
-}
+type WebSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Print error if the result is an Err.
 fn print_error<E>(res: Result<(), E>)
 where
-    E: std::error::Error,
+    E: std::fmt::Display,
 {
     if let Err(err) = res {
         info!("{}", err);
@@ -52,14 +38,17 @@ where
 }
 
 /// Checks all stopped tasks to see if some hooks need to be called.
-async fn on_reconnect(inner_client: Weak<InnerClient>) -> Result<(), Error> {
+async fn callback_worker(
+    inner_client: Weak<InnerClient>,
+    rx_notification: mpsc::Receiver<Notification>,
+) {
     // Response from `custom_tell_stopped` call
-    #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct TaskStatus {
         status: String,
-        totalLength: String,
-        completedLength: String,
+        total_length: String,
+        completed_length: String,
         gid: String,
     }
 
@@ -90,7 +79,7 @@ async fn on_reconnect(inner_client: Weak<InnerClient>) -> Result<(), Error> {
         for (gid, hooks) in &mut lock.0 {
             if let Some(status) = res.get(gid) {
                 // Check if the task is finished by checking the length.
-                if status.totalLength == status.completedLength {
+                if status.total_length == status.completed_length {
                     if let Some(h) = hooks.on_complete.take() {
                         spawn(h);
                     }
@@ -102,95 +91,40 @@ async fn on_reconnect(inner_client: Weak<InnerClient>) -> Result<(), Error> {
             }
         }
     }
-    Ok(())
-}
-
-fn take_hook(event: Event, hook: &mut TaskHooks) -> Option<BoxFuture<'static, ()>> {
-    use Event::*;
-    match event {
-        // "aria2.onDownloadStart" => &mut hook.on_start,
-        // "aria2.onDownloadPause" => &mut hook.on_pause,
-        // "aria2.onDownloadStop" => &mut hook.on_stop,
-        Complete => &mut hook.on_complete,
-        Error => &mut hook.on_error,
-        BtComplete => &mut hook.on_complete,
-        _ => return None,
-    }
-    .take()
-}
-
-fn process_nofitications(notification: &Notification, hooks: &Hooks) -> Result<(), Error> {
-    use Event::*;
-    if !matches!(notification.event, Complete | Error | BtComplete) {
-        return Ok(());
-    }
-    let mut lock = hooks.lock().unwrap();
-    if let Some(hook) = lock.0.get_mut(&notification.gid) {
-        if let Some(hook) = take_hook(notification.event, hook) {
-            spawn(hook);
-        }
-    } else {
-        match lock.1.entry(notification.gid.clone()) {
-            Entry::Occupied(mut e) => {
-                e.get_mut().insert(notification.event);
-            }
-            Entry::Vacant(e) => {
-                e.insert([notification.event].into_iter().collect());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn get_gid_from_notifictaion(req: &RpcRequest) -> Option<&str> {
-    req.params.get(0)?.get("gid")?.as_str()
 }
 
 impl InnerClient {
-    fn id(&self) -> u64 {
-        self.id.fetch_add(1, SeqCst)
+    fn id(&self) -> i32 {
+        self.id.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn subscribe_id<T>(
-        &self,
-        id: u64,
-        timeout: Option<Duration>,
-    ) -> impl Future<Output = Result<T, Error>>
+    async fn wait_for_id<T>(&self, id: i32, rx: oneshot::Receiver<RpcResponse>) -> Result<T, Error>
     where
         T: DeserializeOwned + Send,
     {
-        let (tx, rx) = oneshot::channel();
-        self.subscriptions.lock().unwrap().insert(id, tx);
-        let timeout = timeout.unwrap_or(self.default_timeout);
-        let subscriptions = self.subscriptions.clone();
-
-        async move {
-            let res = if timeout.is_zero() {
-                rx.await.context(error::OneshotRecvSnafu)?
-            } else {
-                match tokio::time::timeout(timeout, rx).await {
-                    Ok(r) => r.context(error::OneshotRecvSnafu)?,
-                    Err(e) => {
-                        subscriptions.lock().unwrap().remove(&id);
-                        // Timed out. Clean up.
-                        Err(Error::Timeout { source: e })?
-                    }
-                }
-            };
-
-            if let Some(err) = res.error {
-                return Err(Error::Aria2 { source: err });
+        let res = rx.await.map_err(|err| {
+            error::WebsocketClosedSnafu {
+                message: format!("receiving response for id {}: {}", id, err),
             }
+            .build()
+        })?;
 
-            if let Some(v) = res.result {
-                Ok(serde_json::from_value::<T>(v).context(error::JsonSnafu)?)
-            } else {
-                error::ResultNotFoundSnafu { response: res }.fail()
+        if let Some(err) = res.error {
+            return Err(err).context(error::Aria2Snafu);
+        }
+
+        if let Some(v) = res.result {
+            Ok(serde_json::from_value::<T>(v).context(error::JsonSnafu)?)
+        } else {
+            error::ParseSnafu {
+                value: format!("{:?}", res),
+                to: "RpcResponse with result",
             }
+            .fail()
         }
     }
 
-    async fn call(&self, id: u64, method: &str, mut params: Vec<Value>) -> Result<(), Error> {
+    async fn call(&self, id: i32, method: &str, mut params: Vec<Value>) -> Result<(), Error> {
         if let Some(ref token) = self.token {
             params.insert(0, Value::String(token.clone()))
         }
@@ -200,91 +134,84 @@ impl InnerClient {
             method: "aria2.".to_string() + method,
             params,
         };
-        self.tx_write
+        self.tx_ws_sink
             .send(Message::Text(
                 serde_json::to_string(&req).context(error::JsonSnafu)?,
             ))
             .await
-            .context(error::MpscSendMessageSnafu)?;
+            .expect("tx_ws_sink: receiver has been dropped");
         Ok(())
     }
 
-    pub async fn call_and_subscribe<T>(
-        &self,
-        method: &str,
-        params: Vec<Value>,
-        timeout: Option<Duration>,
-    ) -> Result<T, Error>
+    pub async fn call_and_wait<T>(&self, method: &str, params: Vec<Value>) -> Result<T, Error>
     where
         T: DeserializeOwned + Send,
     {
         let id = self.id();
-        let fut = self.subscribe_id::<T>(id, timeout);
-        // subscribe before calling
+        let (tx, rx) = oneshot::channel();
+        self.tx_subscribe
+            .send((id, tx))
+            .await
+            .expect("tx_subscribe: receiver has been closed");
+
         self.call(id, method, params).await?;
-        fut.await
+        self.wait_for_id::<T>(id, rx).await
     }
 }
 
-async fn read_worker(
-    mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    subscriptions: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>>,
-    hooks: Hooks,
-    tx_not: broadcast::Sender<Notification>,
-) -> Result<(), Error> {
-    while let Some(Message::Text(s)) = read.try_next().await.context(error::WebsocketSnafu)? {
-        print_error((|| -> Result<(), Error> {
-            let v: Value = serde_json::from_str(&s).context(error::JsonSnafu)?;
-            if let Value::Object(obj) = &v {
-                if obj.contains_key("method") {
-                    // The message is a notification.
-                    // https://aria2.github.io/manual/en/html/aria2c.html#notifications
-                    let errf = || error::UnexpectedMessageSnafu { message: s.clone() };
-                    let req: RpcRequest = serde_json::from_value(v).context(error::JsonSnafu)?;
-                    let gid = get_gid_from_notifictaion(&req).with_context(errf)?;
-                    let not = Notification::new(gid.to_string(), &req.method).with_context(errf)?;
+async fn process_ws(
+    ws: WebSocket,
+    rx_write: &mut mpsc::Receiver<Message>,
+    tx_notification: broadcast::Sender<Notification>,
+    subscriptions: &mut HashMap<i32, oneshot::Sender<RpcResponse>>,
+) {
+    let (mut sink, mut stream) = ws.split();
 
-                    process_nofitications(&not, &hooks)?;
-
-                    let _ = tx_not.send(not);
-                    return Ok(());
+    let stream_worker = async {
+        while let Ok(Some(Message::Text(s))) = stream.try_next().await {
+            debug!("websocket received string: {:?}", s);
+            print_error((|| -> Result<(), Error> {
+                let v: Value = serde_json::from_str(&s).context(error::JsonSnafu)?;
+                if let Value::Object(obj) = &v {
+                    if obj.contains_key("method") {
+                        // The message should be a notification.
+                        // https://aria2.github.io/manual/en/html/aria2c.html#notifications
+                        let req: RpcRequest =
+                            serde_json::from_value(v).context(error::JsonSnafu)?;
+                        let notification = (&req).try_into()?;
+                        let _ = tx_notification.send(notification);
+                        return Ok(());
+                    }
                 }
-            }
 
-            // The message can be a response.
-            let res: RpcResponse = serde_json::from_value(v).context(error::JsonSnafu)?;
-            if let Some(ref id) = res.id {
-                let tx = subscriptions.lock().unwrap().remove(id);
-                if let Some(tx) = tx {
-                    let _ = tx.send(res);
+                // The message should be a response.
+                let res: RpcResponse = serde_json::from_value(v).context(error::JsonSnafu)?;
+                if let Some(ref id) = res.id {
+                    let tx = subscriptions.remove(id);
+                    if let Some(tx) = tx {
+                        let _ = tx.send(res);
+                    }
                 }
-            }
-            Ok(())
-        })());
-    }
-    Ok(())
-}
-
-async fn write_worker(
-    mut write: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    mut rx_write: mpsc::Receiver<Message>,
-    exit: Arc<Notify>,
-) -> mpsc::Receiver<Message> {
-    loop {
-        select! {
-            msg = rx_write.recv() => {
-                if let Some(msg) = msg {
-                    try_continue!(write.send(msg).await);
-                } else {
-                    // The sender is closed, which means the client is dropped.
-                    return rx_write;
-                }
-            },
-            _ = exit.notified() => {
-                return rx_write;
-            }
+                Ok(())
+            })());
         }
+    };
+
+    let sink_worker = async {
+        while let Some(msg) = rx_write.recv().await {
+            debug!("writing message to websocket: {:?}", msg);
+            let r = sink.send(msg).await;
+            print_error(r);
+        }
+    };
+
+    // Run two tasks concurrently.
+    select! {
+        _ = sink_worker => {},
+        _ = stream_worker => {},
     }
+
+    let _ = tx_notification.send(Notification::WebsocketClosed);
 }
 
 impl Client {
@@ -313,79 +240,68 @@ impl Client {
     /// }
     /// ```
     pub async fn connect(url: &str, token: Option<&str>) -> Result<Self, Error> {
-        let url = url.to_string();
-        let (tx_write, mut rx_write) = mpsc::channel::<Message>(4);
-        // channel for sending messages to the aria2 server.
-        let subscriptions: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResponse>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        // Used for storing subscriptions.
-        // On receiving a message, subscription with the same id to the message id will be removed and processed.
-        let hooks: Hooks = Arc::new(Mutex::new((HashMap::new(), HashMap::new())));
-        // The first hashmap stores the hooks, and the second hashmap stores the penging events for extra hooks run check.
+        let (tx_ws_sink, mut rx_ws_sink) = mpsc::channel(4);
+        let (tx_subscribe, rx_subscribe) = mpsc::channel(4);
         let shutdown = Arc::new(Notify::new());
-        // sync all spawned tasks to shutdown
-        let (tx_not, _) = broadcast::channel(16);
         // Broadcast notifications to all subscribers.
-        // The receiver is dropped cause no one subscribes for now.
-        // The notifications can be received again by calling tx_not.subscribe().
+        // The receiver is dropped cause there is no subscriber for now.
+        let (tx_notification, _) = broadcast::channel(16);
 
         let inner = Arc::new(InnerClient {
-            tx_write,
-            id: AtomicU64::new(0),
+            tx_ws_sink,
+            id: AtomicI32::new(0),
             token: token.map(|t| "token:".to_string() + t),
-            subscriptions: subscriptions.clone(),
+            tx_subscribe,
+            tx_notification: tx_notification.clone(),
             shutdown: shutdown.clone(),
-            hooks: hooks.clone(),
-            default_timeout: Duration::from_secs(10),
-            extended_timeout: Duration::from_secs(120),
-            tx_not: tx_not.clone(),
         });
 
+        async fn connect_ws(url: &str) -> Result<WebSocket, Error> {
+            debug!("connecting to {}", url);
+            let (ws, res) = tokio_tungstenite::connect_async(url)
+                .await
+                .context(error::WebsocketIoSnafu)?;
+            debug!("connected to {}, {:?}", url, res);
+            Ok(ws)
+        }
+
+        let ws = connect_ws(url).await?;
         let inner_weak = Arc::downgrade(&inner);
+        let url = url.to_string();
         // The following spawned task following will only hold a weak reference to the inner client.
         spawn(async move {
-            let mut reconnect = false;
+            let mut ws = Some(ws);
+            let mut subscriptions = HashMap::new();
             loop {
-                let connected = select! {
-                    r = tokio_tungstenite::connect_async(&url) => r,
-                    _ = shutdown.notified() => return,
-                };
-                match connected {
-                    Ok((ws, _)) => {
-                        let (write, read) = ws.split();
-                        let read_fut =
-                            read_worker(read, subscriptions.clone(), hooks.clone(), tx_not.clone());
-                        // `read_fut` will be dropped if current task is stopped.
-
-                        let exit = Arc::new(Notify::new());
-                        let write_fut = spawn(write_worker(write, rx_write, exit.clone()));
-
-                        if reconnect {
-                            spawn(on_reconnect(inner_weak.clone()));
-                        } else {
-                            reconnect = true;
-                            // run `on_reconnect` task next time.
-                        }
-
-                        select! {
-                            result = read_fut => {
-                                debug!("aria2 disconnected: {:?}", result);
-                                exit.notify_waiters();
-                                // notify write_worker to exit.
-                                rx_write = write_fut.await.unwrap();
-                                // re-initialize rx_write for the next connection.
-                                sleep(Duration::from_secs(1)).await;
-                            },
-                            _ = shutdown.notified() => {
-                                debug!("aria2 client is exiting");
-                                exit.notify_waiters();
-                                return;
-                            }
-                        }
+                if let Some(ws) = ws.take() {
+                    let fut = process_ws(
+                        ws,
+                        &mut rx_ws_sink,
+                        tx_notification.clone(),
+                        &mut subscriptions,
+                    );
+                    select! {
+                        _ = fut => {},
+                        _ = shutdown.notified() => {
+                            return;
+                        },
                     }
-                    Err(err) => {
-                        info!("aria2: connect failed: {}", err);
-                        sleep(Duration::from_secs(3)).await;
+
+                    // Disconnected. Make current subscriptions invalid.
+                    subscriptions.clear();
+                } else {
+                    let r = select! {
+                        r = connect_ws(&url) => r,
+                        _ = shutdown.notified() => return,
+                    };
+                    match r {
+                        Ok(ws_) => {
+                            ws.replace(ws_);
+                        }
+                        Err(err) => {
+                            info!("{}", err);
+                            sleep(Duration::from_secs(3)).await;
+                        }
                     }
                 }
             }
@@ -395,46 +311,26 @@ impl Client {
     }
 
     // Call aria2 without waiting for the response.
-    pub async fn call(&self, id: u64, method: &str, params: Vec<Value>) -> Result<(), Error> {
+    pub async fn call(&self, id: i32, method: &str, params: Vec<Value>) -> Result<(), Error> {
         self.0.call(id, method, params).await
     }
 
     /// Call aria2 with the given method and params,
     /// and return the result in timeout.
-    ///
-    /// If the timeout is `None`, the default timeout will be used.
-    ///
-    /// If the timeout is zero, there will be no timeout.
-    pub async fn call_and_subscribe<T: DeserializeOwned + Send>(
+    /// If the timeout is None, there is no timeout.
+    pub async fn call_and_wait<T: DeserializeOwned + Send>(
         &self,
         method: &str,
         params: Vec<Value>,
-        timeout: Option<Duration>,
     ) -> Result<T, Error> {
-        self.0.call_and_subscribe(method, params, timeout).await
-    }
-
-    /// Set hook for task with given gid.
-    pub async fn set_hooks(&self, gid: &str, hooks: Option<TaskHooks>) {
-        if let Some(mut hooks) = hooks {
-            if !hooks.is_some() {
-                return;
-            }
-            let mut lock = self.0.hooks.lock().unwrap();
-            if let Some(set) = lock.1.remove(gid) {
-                for event in set {
-                    if let Some(h) = take_hook(event, &mut hooks) {
-                        spawn(h);
-                    }
-                }
-            }
-            if hooks.is_some() {
-                lock.0.insert(gid.to_string(), hooks);
-            }
-        }
+        self.0.call_and_wait(method, params).await
     }
 
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<Notification> {
-        self.0.tx_not.subscribe()
+        self.0.tx_notification.subscribe()
+    }
+
+    pub async fn add_callbacks(&self, gid: &str, callbacks: TaskCallbacks) -> Result<(), Error> {
+        Ok(())
     }
 }
