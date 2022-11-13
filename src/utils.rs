@@ -2,25 +2,25 @@ use serde::Serialize;
 use serde_json::{to_value, Value};
 use snafu::ResultExt;
 
-use crate::{error, Error};
+use crate::{error, Result};
 
 pub trait PushExt {
-    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<(), Error>;
+    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<()>;
 
-    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<(), Error>;
+    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<()>;
 
-    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), Error>;
+    fn push_value<T: Serialize>(&mut self, t: T) -> Result<()>;
 }
 
 impl PushExt for Vec<Value> {
-    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<(), Error> {
+    fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<()> {
         if let Some(t) = t {
             self.push(to_value(t).context(error::JsonSnafu)?);
         }
         Ok(())
     }
 
-    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<(), Error> {
+    fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<()> {
         if let Some(t) = t {
             self.push(to_value(t).context(error::JsonSnafu)?);
         } else {
@@ -29,7 +29,7 @@ impl PushExt for Vec<Value> {
         Ok(())
     }
 
-    fn push_value<T: Serialize>(&mut self, t: T) -> Result<(), Error> {
+    fn push_value<T: Serialize>(&mut self, t: T) -> Result<()> {
         self.push(to_value(t).context(error::JsonSnafu)?);
         Ok(())
     }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aria2_ws::{Client, TaskHooks, TaskOptions};
+use aria2_ws::{Client, TaskCallbacks, TaskOptions};
 use futures::FutureExt;
 use serde_json::json;
 use tokio::{spawn, sync::Semaphore};
@@ -40,8 +40,8 @@ async fn example() {
             ],
             Some(options.clone()),
             None,
-            Some(TaskHooks {
-                on_complete: Some({
+            Some(TaskCallbacks {
+                on_download_complete: Some({
                     let s = semaphore.clone();
                     async move {
                         s.add_permits(1);
@@ -71,8 +71,8 @@ async fn example() {
             ],
             Some(options.clone()),
             None,
-            Some(TaskHooks {
-                on_complete: Some({
+            Some(TaskCallbacks {
+                on_download_complete: Some({
                     let s = semaphore.clone();
                     async move {
                         s.add_permits(1);

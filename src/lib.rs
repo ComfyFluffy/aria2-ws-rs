@@ -116,31 +116,30 @@
 //!
 //! ```
 
+mod callback;
 mod client;
 mod error;
 mod method;
-pub mod options;
+mod options;
 pub mod response;
 mod utils;
-use log::debug;
-pub use options::TaskOptions;
 
 pub use error::Error;
-
+pub use options::TaskOptions;
 // Re-export `Map` for `TaskOptions`.
+pub use callback::TaskCallbacks;
 pub use serde_json::Map;
-use tokio_tungstenite::tungstenite::Message;
 
-use std::sync::atomic::AtomicI32;
-use std::sync::Arc;
-
-use futures::future::BoxFuture;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use snafu::OptionExt;
+use std::sync::atomic::AtomicI32;
+use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc, oneshot, Notify};
+use tokio_tungstenite::tungstenite::Message;
 
-use tokio::sync::{broadcast, Notify};
-
-use tokio::sync::{mpsc, oneshot};
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
@@ -176,32 +175,68 @@ pub struct RpcResponse {
     pub error: Option<Aria2Error>,
 }
 
-/// Hooks that will be executed on notifications.
-///
-/// If the connection lost, all hooks will be checked whether they need to be executed once reconnected.
-#[derive(Default)]
-pub struct TaskCallbacks {
-    // pub on_start: Option<BoxFuture<'static, ()>>,
-    // pub on_pause: Option<BoxFuture<'static, ()>>,
-    // pub on_stop: Option<BoxFuture<'static, ()>>,
-    pub on_complete: Option<BoxFuture<'static, ()>>,
-    pub on_error: Option<BoxFuture<'static, ()>>,
-    // pub on_bt_complete: Option<BoxFuture<'static, ()>>,
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
+pub enum Event {
+    Start,
+    Pause,
+    Stop,
+    Complete,
+    Error,
+    /// This notification will be sent when a torrent download is complete but seeding is still going on.
+    BtComplete,
 }
 
-impl TaskCallbacks {
-    pub fn is_some(&self) -> bool {
-        self.on_complete.is_some() || self.on_error.is_some()
+impl TryFrom<&str> for Event {
+    type Error = crate::Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        use Event::*;
+        let event = match value {
+            "aria2.onDownloadStart" => Start,
+            "aria2.onDownloadPause" => Pause,
+            "aria2.onDownloadStop" => Stop,
+            "aria2.onDownloadComplete" => Complete,
+            "aria2.onDownloadError" => Error,
+            "aria2.onBtDownloadComplete" => BtComplete,
+            _ => return error::ParseSnafu { value, to: "Event" }.fail(),
+        };
+        Ok(event)
     }
 }
 
-struct InnerClient {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Notification {
+    Aria2 { gid: String, event: Event },
+    WebsocketClosed,
+}
+
+impl TryFrom<&RpcRequest> for Notification {
+    type Error = crate::Error;
+
+    fn try_from(req: &RpcRequest) -> Result<Self> {
+        let gid = (|| req.params.get(0)?.get("gid")?.as_str())()
+            .with_context(|| error::ParseSnafu {
+                value: format!("{:?}", req),
+                to: "Notification",
+            })?
+            .to_string();
+        let event = req.method.as_str().try_into()?;
+        Ok(Notification::Aria2 { gid, event })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Subscription {
+    pub id: i32,
+    pub tx: oneshot::Sender<RpcResponse>,
+}
+pub struct InnerClient {
     token: Option<String>,
     id: AtomicI32, // TODO: test negative id
     /// Channel for sending messages to the websocket.
     tx_ws_sink: mpsc::Sender<Message>,
-    tx_notification: broadcast::Sender<response::Notification>,
-    tx_subscribe: mpsc::Sender<(i32, oneshot::Sender<RpcResponse>)>,
+    tx_notification: broadcast::Sender<Notification>,
+    tx_subscription: mpsc::Sender<Subscription>,
     /// On notified, all spawned tasks shut down.
     shutdown: Arc<Notify>,
 }
@@ -235,9 +270,11 @@ impl Drop for InnerClient {
     }
 }
 
+#[cfg(test)]
 mod tests {
     fn check_if_send<T: Send + Sync>() {}
 
+    #[test]
     fn t() {
         check_if_send::<crate::error::Error>();
         check_if_send::<crate::Client>();

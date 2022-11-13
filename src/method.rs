@@ -3,13 +3,11 @@ use crate::{
     options::TaskOptions,
     response,
     utils::{value_into_vec, PushExt},
-    Client, Error, TaskCallbacks,
+    Client, InnerClient, Result, TaskCallbacks,
 };
 use serde::Serialize;
 use serde_json::{json, to_value, Map, Value};
 use snafu::prelude::*;
-
-type Result<T> = std::result::Result<T, Error>;
 
 /// The parameter `how` in `changePosition`.
 ///
@@ -24,7 +22,8 @@ pub enum PositionHow {
     End,
 }
 
-impl Client {
+impl InnerClient {
+    // TODO: use macro to generate these methods
     async fn custom_tell_multi(
         &self,
         method: &str,
@@ -39,62 +38,6 @@ impl Client {
 
     pub async fn get_version(&self) -> Result<response::Version> {
         self.call_and_wait("getVersion", vec![]).await
-    }
-
-    async fn add_callbacks_option(&self, gid: &str, callbacks: Option<TaskCallbacks>) {
-        if let Some(callbacks) = callbacks {
-            self.add_callbacks(gid, callbacks);
-        }
-    }
-
-    pub async fn add_uri(
-        &self,
-        uris: Vec<String>,
-        options: Option<TaskOptions>,
-        position: Option<u32>,
-        callbacks: Option<TaskCallbacks>,
-    ) -> Result<String> {
-        let mut params = vec![to_value(uris).context(error::JsonSnafu)?];
-        params.push_else(options, json!({}))?;
-        params.push_some(position)?;
-
-        let gid: String = self.call_and_wait("addUri", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await;
-        Ok(gid)
-    }
-
-    pub async fn add_torrent(
-        &self,
-        torrent: impl AsRef<[u8]>,
-        uris: Option<Vec<String>>,
-        options: Option<TaskOptions>,
-        position: Option<u32>,
-        callbacks: Option<TaskCallbacks>,
-    ) -> Result<String> {
-        let mut params = vec![Value::String(base64::encode(torrent))];
-        params.push_else(uris, json!([]))?;
-        params.push_else(options, json!({}))?;
-        params.push_some(position)?;
-
-        let gid: String = self.call_and_wait("addTorrent", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await;
-        Ok(gid)
-    }
-
-    pub async fn add_metalink(
-        &self,
-        metalink: impl AsRef<[u8]>,
-        options: Option<TaskOptions>,
-        position: Option<u32>,
-        callbacks: Option<TaskCallbacks>,
-    ) -> Result<String> {
-        let mut params = vec![Value::String(base64::encode(metalink))];
-        params.push_else(options, json!({}))?;
-        params.push_some(position)?;
-
-        let gid: String = self.call_and_wait("addMetalink", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await;
-        Ok(gid)
     }
 
     async fn do_gid(&self, method: &str, gid: &str) -> Result<()> {
@@ -302,5 +245,68 @@ impl Client {
     pub async fn save_session(&self) -> Result<()> {
         self.call_and_wait::<String>("saveSession", vec![]).await?;
         Ok(())
+    }
+}
+
+impl Client {
+    async fn add_callbacks_option(
+        &self,
+        gid: &str,
+        callbacks: Option<TaskCallbacks>,
+    ) -> Result<()> {
+        if let Some(callbacks) = callbacks {
+            self.add_callbacks(gid, callbacks).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn add_uri(
+        &self,
+        uris: Vec<String>,
+        options: Option<TaskOptions>,
+        position: Option<u32>,
+        callbacks: Option<TaskCallbacks>,
+    ) -> Result<String> {
+        let mut params = vec![to_value(uris).context(error::JsonSnafu)?];
+        params.push_else(options, json!({}))?;
+        params.push_some(position)?;
+
+        let gid: String = self.call_and_wait("addUri", params).await?;
+        self.add_callbacks_option(&gid, callbacks).await?;
+        Ok(gid)
+    }
+
+    pub async fn add_torrent(
+        &self,
+        torrent: impl AsRef<[u8]>,
+        uris: Option<Vec<String>>,
+        options: Option<TaskOptions>,
+        position: Option<u32>,
+        callbacks: Option<TaskCallbacks>,
+    ) -> Result<String> {
+        let mut params = vec![Value::String(base64::encode(torrent))];
+        params.push_else(uris, json!([]))?;
+        params.push_else(options, json!({}))?;
+        params.push_some(position)?;
+
+        let gid: String = self.call_and_wait("addTorrent", params).await?;
+        self.add_callbacks_option(&gid, callbacks).await?;
+        Ok(gid)
+    }
+
+    pub async fn add_metalink(
+        &self,
+        metalink: impl AsRef<[u8]>,
+        options: Option<TaskOptions>,
+        position: Option<u32>,
+        callbacks: Option<TaskCallbacks>,
+    ) -> Result<String> {
+        let mut params = vec![Value::String(base64::encode(metalink))];
+        params.push_else(options, json!({}))?;
+        params.push_some(position)?;
+
+        let gid: String = self.call_and_wait("addMetalink", params).await?;
+        self.add_callbacks_option(&gid, callbacks).await?;
+        Ok(gid)
     }
 }
