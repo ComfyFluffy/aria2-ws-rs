@@ -15,7 +15,6 @@ pub struct TaskOptions {
     pub header: Option<Vec<String>>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub split: Option<i32>,
 
     pub all_proxy: Option<String>,
@@ -27,15 +26,12 @@ pub struct TaskOptions {
     pub gid: Option<String>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub r#continue: Option<bool>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub auto_file_renaming: Option<bool>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub check_integrity: Option<bool>,
 
     /// Close connection if download speed is lower than or equal to this value(bytes per sec).
@@ -59,15 +55,12 @@ pub struct TaskOptions {
     pub max_download_limit: Option<String>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub max_connection_per_server: Option<i32>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub max_tries: Option<i32>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub timeout: Option<i32>,
 
     #[serde(flatten)]

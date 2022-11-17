@@ -22,7 +22,7 @@ Built with `tokio`.
 ```rust
 use std::sync::Arc;
 
-use aria2_ws::{Client, TaskHooks, TaskOptions};
+use aria2_ws::{Client, Callbacks, TaskOptions};
 use futures::FutureExt;
 use serde_json::json;
 use tokio::{spawn, sync::Semaphore};
@@ -53,7 +53,7 @@ async fn example() {
             ],
             Some(options.clone()),
             None,
-            Some(TaskHooks {
+            Some(Callbacks {
                 on_complete: Some({
                     let s = semaphore.clone();
                     async move {
@@ -84,7 +84,7 @@ async fn example() {
             ],
             Some(options.clone()),
             None,
-            Some(TaskHooks {
+            Some(Callbacks {
                 on_complete: Some({
                     let s = semaphore.clone();
                     async move {

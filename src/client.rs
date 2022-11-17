@@ -1,5 +1,8 @@
 use crate::{
-    error, Client, InnerClient, Notification, Result, RpcRequest, RpcResponse, Subscription,
+    callback::{callback_worker, TaskCallbacks},
+    error,
+    utils::print_error,
+    Callbacks, Notification, Result, RpcRequest, RpcResponse,
 };
 use futures::prelude::*;
 use log::{debug, info};
@@ -11,158 +14,138 @@ use std::{
     ops::Deref,
     sync::{
         atomic::{AtomicI32, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::Duration,
 };
 use tokio::{
     select, spawn,
-    sync::{broadcast, mpsc, oneshot, Notify},
+    sync::{
+        broadcast::{self},
+        mpsc, oneshot, Notify,
+    },
     time::sleep,
 };
 use tokio_tungstenite::tungstenite::Message;
-
 type WebSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// Print error if the result is an Err.
-fn print_error<E>(res: std::result::Result<(), E>)
-where
-    E: std::fmt::Display,
-{
-    if let Err(err) = res {
-        info!("{}", err);
+#[derive(Debug)]
+pub(crate) struct Subscription {
+    pub id: i32,
+    pub tx: oneshot::Sender<RpcResponse>,
+}
+pub struct InnerClient {
+    token: Option<String>,
+    id: AtomicI32,
+    /// Channel for sending messages to the websocket.
+    tx_ws_sink: mpsc::Sender<Message>,
+    tx_notification: broadcast::Sender<Notification>,
+    tx_subscription: mpsc::Sender<Subscription>,
+    /// On notified, all spawned tasks shut down.
+    shutdown: Arc<Notify>,
+}
+
+/// An aria2 websocket rpc client.
+///
+/// # Example
+///
+/// ```
+/// use aria2_ws::Client;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
+///         .await
+///         .unwrap();
+///     let version = client.get_version().await.unwrap();
+///     println!("{:?}", version);
+/// }
+/// ```
+#[derive(Clone)]
+pub struct Client {
+    inner: Arc<InnerClient>,
+    tx_callback: mpsc::Sender<TaskCallbacks>,
+}
+
+impl Drop for InnerClient {
+    fn drop(&mut self) {
+        // notify all spawned tasks to shutdown
+        debug!("InnerClient dropped, notify shutdown");
+        self.shutdown.notify_waiters();
     }
 }
 
-/// Checks all stopped tasks to see if some hooks need to be called.
-// async fn callback_worker(
-//     inner_client: Weak<InnerClient>,
-//     rx_notification: mpsc::Receiver<Notification>,
-// ) {
-//     // Response from `custom_tell_stopped` call
-//     #[derive(Debug, Clone, Deserialize)]
-//     #[serde(rename_all = "camelCase")]
-//     struct TaskStatus {
-//         status: String,
-//         total_length: String,
-//         completed_length: String,
-//         gid: String,
-//     }
-
-//     if let Some(client) = inner_client.upgrade() {
-//         let mut res: HashMap<String, TaskStatus> = HashMap::new();
-//         // Convert map to TaskStatus.
-//         for map in client
-//             .custom_tell_stopped(
-//                 0,
-//                 1000,
-//                 Some(
-//                     ["status", "totalLength", "completedLength", "gid"]
-//                         .into_iter()
-//                         .map(|x| x.to_string())
-//                         .collect(),
-//                     // Convert to Vec<String>
-//                 ),
-//             )
-//             .await?
-//         {
-//             let r: TaskStatus =
-//                 serde_json::from_value(Value::Object(map)).context(error::JsonSnafu)?;
-
-//             res.insert(r.gid.clone(), r);
-//         }
-
-//         let mut lock = client.hooks.lock().unwrap();
-//         for (gid, hooks) in &mut lock.0 {
-//             if let Some(status) = res.get(gid) {
-//                 // Check if the task is finished by checking the length.
-//                 if status.total_length == status.completed_length {
-//                     if let Some(h) = hooks.on_complete.take() {
-//                         spawn(h);
-//                     }
-//                 } else if status.status == "error" {
-//                     if let Some(h) = hooks.on_error.take() {
-//                         spawn(h);
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }
-
 async fn process_ws(
     ws: WebSocket,
-    rx_write: &mut mpsc::Receiver<Message>,
+    rx_ws_sink: &mut mpsc::Receiver<Message>,
     tx_notification: broadcast::Sender<Notification>,
     rx_subscription: &mut mpsc::Receiver<Subscription>,
 ) {
     let (mut sink, mut stream) = ws.split();
-    let subscriptions = Mutex::new(HashMap::<i32, oneshot::Sender<RpcResponse>>::new());
+    let mut subscriptions = HashMap::<i32, oneshot::Sender<RpcResponse>>::new();
 
-    let mut stream_worker = async {
-        while let Ok(Some(Message::Text(s))) = stream.try_next().await {
-            debug!("websocket received string: {:?}", s);
-            print_error((|| -> Result<()> {
-                let v: Value = serde_json::from_str(&s).context(error::JsonSnafu)?;
-                if let Value::Object(obj) = &v {
-                    if obj.contains_key("method") {
-                        // The message should be a notification.
-                        // https://aria2.github.io/manual/en/html/aria2c.html#notifications
-                        let req: RpcRequest =
-                            serde_json::from_value(v).context(error::JsonSnafu)?;
-                        let notification = (&req).try_into()?;
-                        let _ = tx_notification.send(notification);
-                        return Ok(());
-                    }
-                }
-
-                // The message should be a response.
-                let res: RpcResponse = serde_json::from_value(v).context(error::JsonSnafu)?;
-                if let Some(ref id) = res.id {
-                    let tx = subscriptions.lock().unwrap().remove(id);
-                    if let Some(tx) = tx {
-                        let _ = tx.send(res);
-                    }
-                }
-                Ok(())
-            })());
+    let on_stream = |msg: String,
+                     subscriptions: &mut HashMap<i32, oneshot::Sender<RpcResponse>>|
+     -> Result<()> {
+        let v: Value = serde_json::from_str(&msg).context(error::JsonSnafu)?;
+        if let Value::Object(obj) = &v {
+            if obj.contains_key("method") {
+                // The message should be a notification.
+                // https://aria2.github.io/manual/en/html/aria2c.html#notifications
+                let req: RpcRequest = serde_json::from_value(v).context(error::JsonSnafu)?;
+                let notification = (&req).try_into()?;
+                let _ = tx_notification.send(notification);
+                return Ok(());
+            }
         }
-    }
-    .boxed();
 
-    let mut sink_worker = async {
-        while let Some(msg) = rx_write.recv().await {
-            debug!("writing message to websocket: {:?}", msg);
-            let r = sink.send(msg).await;
-            print_error(r);
+        // The message should be a response.
+        let res: RpcResponse = serde_json::from_value(v).context(error::JsonSnafu)?;
+        if let Some(ref id) = res.id {
+            let tx = subscriptions.remove(id);
+            if let Some(tx) = tx {
+                let _ = tx.send(res);
+            }
         }
-    }
-    .boxed();
+        Ok(())
+    };
 
     loop {
         select! {
-            _ = &mut sink_worker => break,
-            _ = &mut stream_worker => break,
+            msg = stream.try_next() => {
+                debug!("websocket received message: {:?}", msg);
+                let Ok(msg) = msg else {
+                    break;
+                };
+                if let Some(Message::Text(s)) = msg {
+                    print_error(on_stream(s, &mut subscriptions));
+                }
+            },
+            msg = rx_ws_sink.recv() => {
+                debug!("writing message to websocket: {:?}", msg);
+                let Some(msg) = msg else {
+                    break;
+                };
+                print_error(sink.send(msg).await);
+            },
             subscription = rx_subscription.recv() => {
                 if let Some(subscription) = subscription {
-                    subscriptions.lock().unwrap().insert(subscription.id, subscription.tx);
+                    subscriptions.insert(subscription.id, subscription.tx);
                 }
             }
         }
     }
-
-    let _ = tx_notification.send(Notification::WebsocketClosed);
 }
 
 impl InnerClient {
-    pub async fn connect(url: &str, token: Option<&str>) -> Result<Self> {
-        let (tx_ws_sink, mut rx_ws_sink) = mpsc::channel(4);
-        let (tx_subscription, mut rx_subscription) = mpsc::channel(4);
+    pub(crate) async fn connect(url: &str, token: Option<&str>) -> Result<Self> {
+        let (tx_ws_sink, mut rx_ws_sink) = mpsc::channel(1);
+        let (tx_subscription, mut rx_subscription) = mpsc::channel(1);
         let shutdown = Arc::new(Notify::new());
         // Broadcast notifications to all subscribers.
         // The receiver is dropped cause there is no subscriber for now.
-        let (tx_notification, _) = broadcast::channel(16);
+        let (tx_notification, _) = broadcast::channel(1);
 
         let inner = InnerClient {
             tx_ws_sink,
@@ -189,18 +172,23 @@ impl InnerClient {
             let mut ws = Some(ws);
             loop {
                 if let Some(ws) = ws.take() {
+                    let _ = tx_notification.send(Notification::WebSocketConnected);
+
                     let fut = process_ws(
                         ws,
                         &mut rx_ws_sink,
                         tx_notification.clone(),
                         &mut rx_subscription,
                     );
+
                     select! {
                         _ = fut => {},
                         _ = shutdown.notified() => {
                             return;
                         },
                     }
+
+                    let _ = tx_notification.send(Notification::WebsocketClosed);
                 } else {
                     let r = select! {
                         r = connect_ws(&url) => r,
@@ -318,7 +306,20 @@ impl Client {
     /// ```
     pub async fn connect(url: &str, token: Option<&str>) -> Result<Self> {
         let inner = Arc::new(InnerClient::connect(url, token).await?);
-        Ok(Self(inner))
+
+        let weak = Arc::downgrade(&inner);
+        let rx_notification = inner.subscribe_notifications();
+        let (tx_callback, rx_callback) = mpsc::channel(4);
+        spawn(callback_worker(weak, rx_notification, rx_callback));
+
+        Ok(Self { inner, tx_callback })
+    }
+
+    pub(crate) async fn add_callbacks(&self, gid: String, callbacks: Callbacks) {
+        self.tx_callback
+            .send(TaskCallbacks { gid, callbacks })
+            .await
+            .expect("tx_callback: receiver has been dropped");
     }
 }
 
@@ -326,6 +327,6 @@ impl Deref for Client {
     type Target = InnerClient;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.inner
     }
 }

@@ -1,3 +1,4 @@
+use log::info;
 use serde::Serialize;
 use serde_json::{to_value, Value};
 use snafu::ResultExt;
@@ -45,4 +46,14 @@ pub fn value_into_vec(value: Value) -> Vec<Value> {
         return v;
     }
     panic!("value is not Value::Array");
+}
+
+/// Print error if the result is an Err.
+pub fn print_error<E>(res: std::result::Result<(), E>)
+where
+    E: std::fmt::Display,
+{
+    if let Err(err) = res {
+        info!("{}", err);
+    }
 }

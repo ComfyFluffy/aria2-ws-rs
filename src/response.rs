@@ -1,7 +1,6 @@
-use chrono::serde::ts_seconds;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DisplayFromStr};
+use serde_with::{serde_as, DisplayFromStr, TimestampSeconds};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -55,12 +54,10 @@ pub struct Status {
     pub info_hash: Option<String>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub num_seeders: Option<u64>,
 
     /// true if the local endpoint is a seeder. Otherwise false. BitTorrent only.
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub seeder: Option<bool>,
 
     #[serde_as(as = "DisplayFromStr")]
@@ -110,17 +107,16 @@ pub struct Status {
     ///
     /// This key exists only when this download is being hash checked.
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub verified_length: Option<u64>,
 
     /// `true` if this download is waiting for the hash check in a queue.
     ///
     /// This key exists only when this download is in the queue.
     #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(default)]
     pub verify_integrity_pending: Option<bool>,
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BittorrentStatus {
@@ -128,8 +124,8 @@ pub struct BittorrentStatus {
 
     pub comment: Option<String>,
 
-    #[serde(with = "ts_seconds")]
-    pub creation_date: DateTime<Utc>,
+    #[serde_as(as = "Option<TimestampSeconds<i64>>")]
+    pub creation_date: Option<DateTime<Utc>>,
 
     pub mode: Option<BitTorrentFileMode>,
 }

@@ -3,7 +3,7 @@ use crate::{
     options::TaskOptions,
     response,
     utils::{value_into_vec, PushExt},
-    Client, InnerClient, Result, TaskCallbacks,
+    Callbacks, Client, InnerClient, Result,
 };
 use serde::Serialize;
 use serde_json::{json, to_value, Map, Value};
@@ -40,22 +40,22 @@ impl InnerClient {
         self.call_and_wait("getVersion", vec![]).await
     }
 
-    async fn do_gid(&self, method: &str, gid: &str) -> Result<()> {
+    async fn returning_gid(&self, method: &str, gid: &str) -> Result<()> {
         self.call_and_wait::<String>(method, vec![Value::String(gid.to_string())])
             .await?;
         Ok(())
     }
 
     pub async fn remove(&self, gid: &str) -> Result<()> {
-        self.do_gid("remove", gid).await
+        self.returning_gid("remove", gid).await
     }
 
     pub async fn force_remove(&self, gid: &str) -> Result<()> {
-        self.do_gid("forceRemove", gid).await
+        self.returning_gid("forceRemove", gid).await
     }
 
     pub async fn pause(&self, gid: &str) -> Result<()> {
-        self.do_gid("pause", gid).await
+        self.returning_gid("pause", gid).await
     }
 
     pub async fn pause_all(&self) -> Result<()> {
@@ -64,7 +64,7 @@ impl InnerClient {
     }
 
     pub async fn force_pause(&self, gid: &str) -> Result<()> {
-        self.do_gid("forcePause", gid).await
+        self.returning_gid("forcePause", gid).await
     }
 
     pub async fn force_pause_all(&self) -> Result<()> {
@@ -74,7 +74,7 @@ impl InnerClient {
     }
 
     pub async fn unpause(&self, gid: &str) -> Result<()> {
-        self.do_gid("unpause", gid).await
+        self.returning_gid("unpause", gid).await
     }
 
     pub async fn unpause_all(&self) -> Result<()> {
@@ -249,15 +249,10 @@ impl InnerClient {
 }
 
 impl Client {
-    async fn add_callbacks_option(
-        &self,
-        gid: &str,
-        callbacks: Option<TaskCallbacks>,
-    ) -> Result<()> {
+    async fn add_callbacks_option(&self, gid: &str, callbacks: Option<Callbacks>) {
         if let Some(callbacks) = callbacks {
-            self.add_callbacks(gid, callbacks).await?;
+            self.add_callbacks(gid.to_string(), callbacks).await;
         }
-        Ok(())
     }
 
     pub async fn add_uri(
@@ -265,14 +260,14 @@ impl Client {
         uris: Vec<String>,
         options: Option<TaskOptions>,
         position: Option<u32>,
-        callbacks: Option<TaskCallbacks>,
+        callbacks: Option<Callbacks>,
     ) -> Result<String> {
         let mut params = vec![to_value(uris).context(error::JsonSnafu)?];
         params.push_else(options, json!({}))?;
         params.push_some(position)?;
 
         let gid: String = self.call_and_wait("addUri", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await?;
+        self.add_callbacks_option(&gid, callbacks).await;
         Ok(gid)
     }
 
@@ -282,7 +277,7 @@ impl Client {
         uris: Option<Vec<String>>,
         options: Option<TaskOptions>,
         position: Option<u32>,
-        callbacks: Option<TaskCallbacks>,
+        callbacks: Option<Callbacks>,
     ) -> Result<String> {
         let mut params = vec![Value::String(base64::encode(torrent))];
         params.push_else(uris, json!([]))?;
@@ -290,7 +285,7 @@ impl Client {
         params.push_some(position)?;
 
         let gid: String = self.call_and_wait("addTorrent", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await?;
+        self.add_callbacks_option(&gid, callbacks).await;
         Ok(gid)
     }
 
@@ -299,14 +294,14 @@ impl Client {
         metalink: impl AsRef<[u8]>,
         options: Option<TaskOptions>,
         position: Option<u32>,
-        callbacks: Option<TaskCallbacks>,
+        callbacks: Option<Callbacks>,
     ) -> Result<String> {
         let mut params = vec![Value::String(base64::encode(metalink))];
         params.push_else(options, json!({}))?;
         params.push_some(position)?;
 
         let gid: String = self.call_and_wait("addMetalink", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await?;
+        self.add_callbacks_option(&gid, callbacks).await;
         Ok(gid)
     }
 }

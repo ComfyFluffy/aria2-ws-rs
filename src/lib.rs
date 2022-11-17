@@ -15,7 +15,7 @@
 //! ```no_run
 //! use std::sync::Arc;
 //!
-//! use aria2_ws::{Client, TaskHooks, TaskOptions};
+//! use aria2_ws::{Client, Callbacks, TaskOptions};
 //! use futures::FutureExt;
 //! use serde_json::json;
 //! use tokio::{spawn, sync::Semaphore};
@@ -47,7 +47,7 @@
 //!             ],
 //!             Some(options.clone()),
 //!             None,
-//!             Some(TaskHooks {
+//!             Some(Callbacks {
 //!                 on_complete: Some({
 //!                     let s = semaphore.clone();
 //!                     async move {
@@ -78,7 +78,7 @@
 //!             ],
 //!             Some(options.clone()),
 //!             None,
-//!             Some(TaskHooks {
+//!             Some(Callbacks {
 //!                 on_complete: Some({
 //!                     let s = semaphore.clone();
 //!                     async move {
@@ -127,17 +127,13 @@ mod utils;
 pub use error::Error;
 pub use options::TaskOptions;
 // Re-export `Map` for `TaskOptions`.
-pub use callback::TaskCallbacks;
+pub use callback::Callbacks;
+pub use client::{Client, InnerClient};
 pub use serde_json::Map;
 
-use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use snafu::OptionExt;
-use std::sync::atomic::AtomicI32;
-use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, oneshot, Notify};
-use tokio_tungstenite::tungstenite::Message;
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
@@ -207,6 +203,7 @@ impl TryFrom<&str> for Event {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notification {
     Aria2 { gid: String, event: Event },
+    WebSocketConnected,
     WebsocketClosed,
 }
 
@@ -222,51 +219,6 @@ impl TryFrom<&RpcRequest> for Notification {
             .to_string();
         let event = req.method.as_str().try_into()?;
         Ok(Notification::Aria2 { gid, event })
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Subscription {
-    pub id: i32,
-    pub tx: oneshot::Sender<RpcResponse>,
-}
-pub struct InnerClient {
-    token: Option<String>,
-    id: AtomicI32, // TODO: test negative id
-    /// Channel for sending messages to the websocket.
-    tx_ws_sink: mpsc::Sender<Message>,
-    tx_notification: broadcast::Sender<Notification>,
-    tx_subscription: mpsc::Sender<Subscription>,
-    /// On notified, all spawned tasks shut down.
-    shutdown: Arc<Notify>,
-}
-
-/// An aria2 websocket rpc client.
-///
-/// The client contains an `Arc<InnerClient>)` and can be cloned.
-///
-/// # Example
-///
-/// ```
-/// use aria2_ws::Client;
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
-///         .await
-///         .unwrap();
-///     let version = client.get_version().await.unwrap();
-///     println!("{:?}", version);
-/// }
-/// ```
-#[derive(Clone)]
-pub struct Client(Arc<InnerClient>);
-
-impl Drop for InnerClient {
-    fn drop(&mut self) {
-        // notify all spawned tasks to shutdown
-        debug!("InnerClient dropped, notify shutdown");
-        self.shutdown.notify_waiters();
     }
 }
 
