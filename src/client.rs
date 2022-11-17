@@ -20,10 +20,7 @@ use std::{
 };
 use tokio::{
     select, spawn,
-    sync::{
-        broadcast::{self},
-        mpsc, oneshot, Notify,
-    },
+    sync::{broadcast, mpsc, oneshot, Notify},
     time::sleep,
 };
 use tokio_tungstenite::tungstenite::Message;
@@ -65,6 +62,7 @@ pub struct InnerClient {
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<InnerClient>,
+    // The sender can be cloned like `Arc`.
     tx_callback: mpsc::Sender<TaskCallbacks>,
 }
 
@@ -167,7 +165,7 @@ impl InnerClient {
 
         let ws = connect_ws(url).await?;
         let url = url.to_string();
-        // The following spawned task following will only hold a weak reference to the inner client.
+        // spawn a task to process websocket messages
         spawn(async move {
             let mut ws = Some(ws);
             loop {
@@ -240,6 +238,7 @@ impl InnerClient {
         }
     }
 
+    /// Send a rpc request to websocket without waiting for response.
     pub async fn call(&self, id: i32, method: &str, mut params: Vec<Value>) -> Result<()> {
         if let Some(ref token) = self.token {
             params.insert(0, Value::String(token.clone()))
@@ -259,6 +258,7 @@ impl InnerClient {
         Ok(())
     }
 
+    /// Send a rpc request to websocket and wait for corresponding response.
     pub async fn call_and_wait<T>(&self, method: &str, params: Vec<Value>) -> Result<T>
     where
         T: DeserializeOwned + Send,
@@ -274,6 +274,9 @@ impl InnerClient {
         self.wait_for_id::<T>(id, rx).await
     }
 
+    /// Subscribe to notifications.
+    ///
+    /// Returns a instance of `broadcast::Receiver` which can be used to receive notifications.
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<Notification> {
         self.tx_notification.subscribe()
     }
@@ -310,6 +313,7 @@ impl Client {
         let weak = Arc::downgrade(&inner);
         let rx_notification = inner.subscribe_notifications();
         let (tx_callback, rx_callback) = mpsc::channel(4);
+        // hold a weak reference to `inner` to prevent not shutting down when `Client` is dropped
         spawn(callback_worker(weak, rx_notification, rx_callback));
 
         Ok(Self { inner, tx_callback })

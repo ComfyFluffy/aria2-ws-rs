@@ -23,7 +23,6 @@ pub enum PositionHow {
 }
 
 impl InnerClient {
-    // TODO: use macro to generate these methods
     async fn custom_tell_multi(
         &self,
         method: &str,

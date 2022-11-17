@@ -1,12 +1,12 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use aria2_ws::{Callbacks, Client, TaskOptions};
-use futures::{FutureExt, StreamExt};
+use futures::FutureExt;
 use serde_json::json;
+use test_log::test;
 use tokio::{
     spawn,
     sync::{broadcast, Semaphore},
-    time::sleep,
 };
 
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn drop_test() {
         .unwrap();
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 // #[ignore]
 async fn example() {
     let client = Client::connect("ws://127.0.0.1:6800/jsonrpc", None)
@@ -116,39 +116,6 @@ async fn example() {
     // Wait for 2 tasks to finish.
     let _ = semaphore.acquire_many(2).await.unwrap();
 
-    // client.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-async fn test_broadcast() {
-    let (tx, mut _rx) = broadcast::channel::<String>(2);
-    let _ = tx.send("test out 0".to_string());
-    {
-        let tx = tx.clone();
-        spawn(async move {
-            sleep(Duration::from_secs(1)).await;
-            tx.send("test".to_string()).unwrap();
-            sleep(Duration::from_secs(1)).await;
-            tx.send("test2".to_string()).unwrap();
-        });
-    }
-
-    // let mut rx = tx.subscribe();
-    drop(tx);
-    spawn(async move {
-        loop {
-            sleep(Duration::from_millis(100)).await;
-            let r = _rx.recv().await;
-            println!("Received notification {:?}", r);
-            match r {
-                Ok(_) => {}
-                Err(broadcast::error::RecvError::Closed) => {
-                    break;
-                }
-                _ => {}
-            }
-        }
-    })
-    .await
-    .unwrap();
+    // Force shutdown aria2.
+    // client.force_shutdown().await.unwrap();
 }

@@ -12,10 +12,10 @@ Built with `tokio`.
 
 ## Features
 
-- Almost all methods and structed responses
+- Methods and typed responses
 - Auto reconnect
-- Ensures `on_complete` and `on_error` hook to be executed even after reconnected.
-- Supports notifications
+- Ensures `on_download_complete` and `on_error` callback to be executed even after reconnected.
+- Notification subscription
 
 ## Example
 
@@ -34,14 +34,29 @@ async fn example() {
     let options = TaskOptions {
         split: Some(2),
         header: Some(vec!["Referer: https://www.pixiv.net/".to_string()]),
-        all_proxy: Some("http://127.0.0.1:10809".to_string()),
         // Add extra options which are not included in TaskOptions.
-        extra_options: json!({"max-download-limit": "200K"})
+        extra_options: json!({"max-download-limit": "100K"})
             .as_object()
             .unwrap()
             .clone(),
         ..Default::default()
     };
+
+    let mut not = client.subscribe_notifications();
+    spawn(async move {
+        loop {
+            match not.recv().await {
+                Ok(msg) => println!("Received notification {:?}", &msg),
+                Err(broadcast::error::RecvError::Closed) => {
+                    println!("Notification channel closed");
+                    break;
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    println!("Notification channel lagged");
+                }
+            }
+        }
+    });
 
     // use `tokio::sync::Semaphore` to wait for all tasks to finish.
     let semaphore = Arc::new(Semaphore::new(0));
@@ -54,7 +69,7 @@ async fn example() {
             Some(options.clone()),
             None,
             Some(Callbacks {
-                on_complete: Some({
+                on_download_complete: Some({
                     let s = semaphore.clone();
                     async move {
                         s.add_permits(1);
@@ -85,7 +100,7 @@ async fn example() {
             Some(options.clone()),
             None,
             Some(Callbacks {
-                on_complete: Some({
+                on_download_complete: Some({
                     let s = semaphore.clone();
                     async move {
                         s.add_permits(1);
@@ -106,22 +121,11 @@ async fn example() {
         .await
         .unwrap();
 
-    let mut not = client.subscribe_notifications();
-
-    spawn(async move {
-        loop {
-            if let Ok(msg) = not.recv().await {
-                println!("Received notification {:?}", &msg);
-            } else {
-                return;
-            }
-        }
-    });
-
     // Wait for 2 tasks to finish.
     let _ = semaphore.acquire_many(2).await.unwrap();
 
-    client.shutdown().await.unwrap();
+    // Force shutdown aria2.
+    // client.force_shutdown().await.unwrap();
 }
 
 ```

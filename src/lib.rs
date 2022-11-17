@@ -171,6 +171,7 @@ pub struct RpcResponse {
     pub error: Option<Aria2Error>,
 }
 
+/// Events about download progress from aria2.
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
 pub enum Event {
     Start,

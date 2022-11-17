@@ -14,4 +14,6 @@ pub enum Error {
     Json { source: serde_json::Error },
     #[snafu(display("aria2: websocket closed: {message}"))]
     WebsocketClosed { message: String },
+    #[snafu(display("aria2: reconnect task timeout"))]
+    ReconnectTaskTimeout { source: tokio::time::error::Elapsed },
 }

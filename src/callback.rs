@@ -1,12 +1,13 @@
-use std::{collections::HashMap, fmt, sync::Weak};
+use std::{collections::HashMap, fmt, sync::Weak, time::Duration};
 
 use futures::future::BoxFuture;
-use log::info;
+use log::{debug, info};
 use serde::Deserialize;
 use snafu::ResultExt;
 use tokio::{
     select, spawn,
     sync::{broadcast, mpsc},
+    time::timeout,
 };
 
 use crate::{error, utils::print_error, Event, InnerClient, Notification, Result};
@@ -31,9 +32,10 @@ impl fmt::Debug for Callbacks {
     }
 }
 
+/// Check whether the callback is ready to be executed after reconnected.
 async fn on_reconnect(
     inner: &InnerClient,
-    callbacks: &mut HashMap<String, Callbacks>,
+    callbacks_map: &mut HashMap<String, Callbacks>,
 ) -> Result<()> {
     // Response from `custom_tell_stopped` call
     #[derive(Debug, Clone, Deserialize)]
@@ -45,30 +47,33 @@ async fn on_reconnect(
         gid: String,
     }
 
-    if callbacks.is_empty() {
+    if callbacks_map.is_empty() {
         return Ok(());
     }
     let mut tasks = HashMap::new();
-    for map in inner
-        .custom_tell_stopped(
-            0,
-            1000,
-            Some(
-                ["status", "totalLength", "completedLength", "gid"]
-                    .into_iter()
-                    .map(|x| x.to_string())
-                    .collect(),
-            ),
-        )
-        .await?
+    let req = inner.custom_tell_stopped(
+        0,
+        1000,
+        Some(
+            ["status", "totalLength", "completedLength", "gid"]
+                .into_iter()
+                .map(|x| x.to_string())
+                .collect(),
+        ),
+    );
+    // Cancel if takes too long
+    for map in timeout(Duration::from_secs(10), req)
+        .await
+        .context(error::ReconnectTaskTimeoutSnafu)??
     {
         let task: TaskStatus =
             serde_json::from_value(serde_json::Value::Object(map)).context(error::JsonSnafu)?;
         tasks.insert(task.gid.clone(), task);
     }
 
-    for (gid, callbacks) in callbacks {
+    for (gid, callbacks) in callbacks_map {
         if let Some(status) = tasks.get(gid) {
+            debug!("checking callbacks for gid {} after reconnected", gid);
             // Check if the task is finished by checking the length.
             if status.total_length == status.completed_length {
                 if let Some(h) = callbacks.on_download_complete.take() {
@@ -94,6 +99,7 @@ async fn on_aria2_notification(
         match event {
             Event::Complete | Event::BtComplete => {
                 if let Some(callback) = callbacks.on_download_complete.take() {
+                    // Spawn a new task to avoid blocking the notification receiver.
                     spawn(callback);
                 }
             }
@@ -133,7 +139,10 @@ pub(crate) async fn callback_worker(
                                 if is_first_notification {
                                     is_first_notification = false;
                                     continue;
+                                    // Skip the first connected notification
                                 }
+                                // We might miss some notifications when the connection is lost.
+                                // So we need to check whether the callbacks need to be executed after reconnected.
                                 if let Some(inner) = weak.upgrade() {
                                     print_error(on_reconnect(inner.as_ref(), &mut callbacks_map).await);
                                 }
