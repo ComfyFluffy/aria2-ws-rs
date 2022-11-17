@@ -19,7 +19,9 @@ type Callback = Option<BoxFuture<'static, ()>>;
 /// If the connection lost, all callbacks will be checked whether they need to be executed once reconnected.
 #[derive(Default)]
 pub struct Callbacks {
+    /// Will trigger on `Event::Complete` or `Event::BtComplete`.
     pub on_download_complete: Callback,
+    /// Will trigger on `Event::Error`.
     pub on_error: Callback,
 }
 
