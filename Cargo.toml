@@ -25,4 +25,3 @@ snafu = "0.7"
 log = "0.4"
 serde_with = { version = "2", features = ["chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
-async-stream = "0.3.3"
