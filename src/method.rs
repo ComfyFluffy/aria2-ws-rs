@@ -251,7 +251,7 @@ impl InnerClient {
 impl Client {
     async fn add_callbacks_option(&self, gid: &str, callbacks: Option<Callbacks>) {
         if let Some(callbacks) = callbacks {
-            self.add_callbacks(gid.to_string(), callbacks).await;
+            self.add_callbacks(gid.to_string(), callbacks);
         }
     }
 
