@@ -1,6 +1,6 @@
 [package]
 name = "aria2-ws"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "An aria2 websocket jsonrpc API with notification support"
 repository = "https://github.com/WOo0W/aria2-ws-rs"
@@ -23,5 +23,5 @@ futures = "0.3"
 base64 = "0.22"
 snafu = "0.8"
 log = "0.4"
-serde_with = { version = "2", features = ["chrono"] }
+serde_with = { version = "3", features = ["chrono"] }
 chrono = { version = "0.4", features = ["serde"] }

@@ -20,6 +20,7 @@ Dependency updates:
 tokio-tungstenite = "0.21"
 base64 = "0.22"
 snafu = "0.8"
+serde_with = { version = "3", features = ["chrono"] }
 ```
 
 - Improve callback execution to address possible execution miss.
