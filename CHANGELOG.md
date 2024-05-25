@@ -11,3 +11,16 @@
 - Refactor code to use channels instead of mutexes
 - Remove default timeout
 - Rename `Hooks` to `Callbacks`
+
+## 0.5.0
+
+Dependency updates:
+
+```toml
+tokio-tungstenite = "0.21"
+base64 = "0.22"
+snafu = "0.8"
+```
+
+- Improve callback execution to address possible execution miss.
+- Fix `announce_list` type <https://github.com/ComfyFluffy/aria2-ws-rs/pull/3>.
