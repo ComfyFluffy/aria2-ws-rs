@@ -5,6 +5,7 @@ use crate::{
     utils::{value_into_vec, PushExt},
     Callbacks, Client, InnerClient, Result,
 };
+use base64::prelude::*;
 use serde::Serialize;
 use serde_json::{json, to_value, Map, Value};
 use snafu::prelude::*;
@@ -278,7 +279,7 @@ impl Client {
         position: Option<u32>,
         callbacks: Option<Callbacks>,
     ) -> Result<String> {
-        let mut params = vec![Value::String(base64::encode(torrent))];
+        let mut params = vec![Value::String(BASE64_STANDARD.encode(torrent))];
         params.push_else(uris, json!([]))?;
         params.push_else(options, json!({}))?;
         params.push_some(position)?;
@@ -295,7 +296,7 @@ impl Client {
         position: Option<u32>,
         callbacks: Option<Callbacks>,
     ) -> Result<String> {
-        let mut params = vec![Value::String(base64::encode(metalink))];
+        let mut params = vec![Value::String(BASE64_STANDARD.encode(metalink))];
         params.push_else(options, json!({}))?;
         params.push_some(position)?;
 
