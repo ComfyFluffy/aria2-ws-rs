@@ -9,8 +9,6 @@ pub trait PushExt {
     fn push_some<T: Serialize>(&mut self, t: Option<T>) -> Result<()>;
 
     fn push_else<T: Serialize>(&mut self, t: Option<T>, v: Value) -> Result<()>;
-
-    fn push_value<T: Serialize>(&mut self, t: T) -> Result<()>;
 }
 
 impl PushExt for Vec<Value> {
@@ -27,11 +25,6 @@ impl PushExt for Vec<Value> {
         } else {
             self.push(v);
         }
-        Ok(())
-    }
-
-    fn push_value<T: Serialize>(&mut self, t: T) -> Result<()> {
-        self.push(to_value(t).context(error::JsonSnafu)?);
         Ok(())
     }
 }

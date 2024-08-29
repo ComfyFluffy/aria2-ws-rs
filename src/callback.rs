@@ -36,6 +36,12 @@ pub struct Callbacks {
     pub on_error: Callback,
 }
 
+impl Callbacks {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.on_download_complete.is_none() && self.on_error.is_none()
+    }
+}
+
 impl fmt::Debug for Callbacks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Callbacks")

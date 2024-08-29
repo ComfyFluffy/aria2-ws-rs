@@ -320,6 +320,9 @@ impl Client {
     }
 
     pub(crate) fn add_callbacks(&self, gid: String, callbacks: Callbacks) {
+        if callbacks.is_empty() {
+            return;
+        }
         self.tx_callback
             .send(TaskCallbacks { gid, callbacks })
             .expect("tx_callback: receiver has been dropped");

@@ -249,7 +249,7 @@ impl InnerClient {
 }
 
 impl Client {
-    async fn add_callbacks_option(&self, gid: &str, callbacks: Option<Callbacks>) {
+    fn add_callbacks_option(&self, gid: &str, callbacks: Option<Callbacks>) {
         if let Some(callbacks) = callbacks {
             self.add_callbacks(gid.to_string(), callbacks);
         }
@@ -267,7 +267,7 @@ impl Client {
         params.push_some(position)?;
 
         let gid: String = self.call_and_wait("addUri", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await;
+        self.add_callbacks_option(&gid, callbacks);
         Ok(gid)
     }
 
@@ -285,7 +285,7 @@ impl Client {
         params.push_some(position)?;
 
         let gid: String = self.call_and_wait("addTorrent", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await;
+        self.add_callbacks_option(&gid, callbacks);
         Ok(gid)
     }
 
@@ -301,7 +301,7 @@ impl Client {
         params.push_some(position)?;
 
         let gid: String = self.call_and_wait("addMetalink", params).await?;
-        self.add_callbacks_option(&gid, callbacks).await;
+        self.add_callbacks_option(&gid, callbacks);
         Ok(gid)
     }
 }
