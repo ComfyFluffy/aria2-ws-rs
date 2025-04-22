@@ -117,7 +117,7 @@ async fn process_ws(
                     break;
                 };
                 if let Some(Message::Text(s)) = msg {
-                    print_error(on_stream(s, &mut subscriptions));
+                    print_error(on_stream(s.to_string(), &mut subscriptions));
                 }
             },
             msg = rx_ws_sink.recv() => {
@@ -251,7 +251,9 @@ impl InnerClient {
         };
         self.tx_ws_sink
             .send(Message::Text(
-                serde_json::to_string(&req).context(error::JsonSnafu)?,
+                serde_json::to_string(&req)
+                    .context(error::JsonSnafu)?
+                    .into(),
             ))
             .await
             .expect("tx_ws_sink: receiver has been dropped");
@@ -304,7 +306,7 @@ impl Client {
     ///         )
     ///         .await
     ///         .unwrap();
-    ///     client.force_remove(gid).await.unwrap();
+    ///     client.force_remove(&gid).await.unwrap();
     /// }
     /// ```
     pub async fn connect(url: &str, token: Option<&str>) -> Result<Self> {
