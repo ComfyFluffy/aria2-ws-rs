@@ -34,19 +34,22 @@ async fn test_global(c: &Client) {
 
 async fn test_metadata(c: &Client, gid: &str) {
     let r = c.get_option(gid).await.unwrap();
-    println!("{:?}\n", r);
+    println!("{r:?}\n");
 
     let r = c.get_files(gid).await.unwrap();
-    println!("{:?}\n", r);
+    println!("{r:?}\n");
 
     // let r = c.get_peers(gid).await.unwrap();
     // println!("{:?}\n", r);
 
     let r = c.get_servers(gid).await.unwrap();
-    println!("{:?}\n", r);
+    println!("{r:?}\n");
 
     let r = c.get_uris(gid).await.unwrap();
-    println!("{:?}\n", r);
+    println!("{r:?}\n");
+
+    let r = c.tell_status(gid).await.unwrap();
+    println!("{r:?}\n");
 }
 
 async fn sleep(secs: u64) {
