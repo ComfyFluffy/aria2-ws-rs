@@ -18,7 +18,7 @@ test-log = "0.2"
 tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio-tungstenite = "0.21"
+tokio-tungstenite = "0.26"
 futures = "0.3"
 base64 = "0.22"
 snafu = "0.8"

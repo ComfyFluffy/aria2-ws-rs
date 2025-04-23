@@ -48,7 +48,7 @@
 //!             Some(options.clone()),
 //!             None,
 //!             Some(Callbacks {
-//!                 on_complete: Some({
+//!                 on_download_complete: Some({
 //!                     let s = semaphore.clone();
 //!                     async move {
 //!                         s.add_permits(1);
@@ -79,7 +79,7 @@
 //!             Some(options.clone()),
 //!             None,
 //!             Some(Callbacks {
-//!                 on_complete: Some({
+//!                 on_download_complete: Some({
 //!                     let s = semaphore.clone();
 //!                     async move {
 //!                         s.add_permits(1);
